@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Map Test</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            font-family: Arial, sans-serif;
+        }
+        #map { 
+            height: 100vh; 
+            width: 100vw; 
+            background-color: #f0f0f0; /* Fallback background to see if container exists */
+        }
+        .debug { 
+            position: absolute; 
+            top: 10px; 
+            right: 10px; 
+            background: rgba(255,255,255,0.9); 
+            padding: 10px; 
+            z-index: 1000;
+            border-radius: 5px;
+            max-width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div class="debug">
+        <strong>Status:</strong> <span id="status">Starting...</span>
+    </div>
+    <div id="map"></div>
+    
+    <!-- Libraries -->
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    
+    <script>
+        function setStatus(message) {
+            document.getElementById('status').textContent = message;
+            console.log('Status:', message);
+        }
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            setStatus('DOM ready, checking libraries...');
+            
+            // Check libraries
+            if (typeof L === 'undefined') {
+                setStatus('ERROR: Leaflet not loaded');
+                return;
+            }
+            if (typeof Papa === 'undefined') {
+                setStatus('ERROR: PapaParse not loaded');
+                return;
+            }
+            
+            setStatus('Libraries loaded, creating map...');
+            
+            try {
+                // Create map
+                const map = L.map('map', {
+                    center: [39.8283, -98.5795],
+                    zoom: 4,
+                    zoomControl: true
+                });
+                
+                // Add base layer
+                const baseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                    attribution: '© CARTO',
+                    subdomains: 'abcd',
+                    maxZoom: 20
+                });
+                
+                baseLayer.addTo(map);
+                
+                // Test marker
+                L.marker([39.8283, -98.5795])
+                    .addTo(map)
+                    .bindPopup('Map is working!')
+                    .openPopup();
+                
+                setStatus('SUCCESS: Map created with test marker');
+                
+                // Force resize after short delay
+                setTimeout(() => {
+                    map.invalidateSize();
+                    setStatus('Map resized and ready');
+                }, 200);
+                
+            } catch (error) {
+                setStatus('ERROR: ' + error.message);
+                console.error('Map error:', error);
+            }
+        });
+    </script>
+</body>
+</html> 
