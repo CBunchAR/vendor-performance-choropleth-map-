@@ -188,8 +188,8 @@ const loadDataLayers = async () => {
             loadCSV('/input/print_distribution.csv'),
             loadCSV('/input/visitor_data.csv'),
             loadCSV('/input/store_locations.csv'),
-            fetch('/input/NY_ZIP.geojson').then(response => response.json()),
-            fetch('/input/VT_ZIP.geojson').then(response => response.json())
+            fetch('/input/NY_ZIP_compressed.geojson').then(response => response.json()),
+            fetch('/input/VT_ZIP_compressed.geojson').then(response => response.json())
         ]);
         
         console.log('Raw data loaded successfully');
