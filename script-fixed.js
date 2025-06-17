@@ -609,7 +609,7 @@ const createContextAwareTooltip = (zipCode, vendors) => {
                 font-size: 14px; 
                 line-height: 1.4; 
                 color: #333; 
-                max-width: 550px; 
+                max-width: 650px; 
                 word-wrap: break-word;
                 padding: 10px;
             ">
@@ -631,7 +631,7 @@ const createContextAwareTooltip = (zipCode, vendors) => {
             font-size: 14px; 
             line-height: 1.4; 
             color: #333; 
-            max-width: 550px;
+            max-width: 650px;
             padding: 10px;
             word-wrap: break-word;
             box-sizing: border-box;
@@ -696,17 +696,50 @@ const createContextAwareTooltip = (zipCode, vendors) => {
                 ">${vendor.vendor}</div>
             </div>
         `;
+        
+        // Add notes section for single vendor if notes exist
+        if (vendor.notes && vendor.notes.trim()) {
+            content += `
+                <div style="
+                    background: #fff3cd;
+                    border-left: 4px solid #ffc107;
+                    padding: 10px;
+                    margin-top: 8px;
+                    border-radius: 0 4px 4px 0;
+                ">
+                    <div style="
+                        font-weight: bold;
+                        font-size: 12px;
+                        color: #856404;
+                        margin-bottom: 6px;
+                        text-transform: uppercase;
+                        letter-spacing: 0.5px;
+                    ">Notes:</div>
+                    <div style="
+                        font-size: 12px;
+                        line-height: 1.4;
+                        color: #856404;
+                        word-wrap: break-word;
+                    ">${vendor.notes.trim()}</div>
+                </div>
+            `;
+        }
     } else {
-        // Multiple vendors with enhanced table layout
+        // Multiple vendors with enhanced table layout including notes column
         content += `<div style="margin-top: 8px;">`;
         content += `<div style="font-weight: bold; margin-bottom: 10px; font-size: 13px; color: #555;">Vendor Performance Details:</div>`;
         
-        // Table header
+        // Check if any vendor has notes to determine if we need the notes column
+        const hasNotes = vendors.some(vendor => vendor.notes && vendor.notes.trim());
+        
+        // Table header - adjust grid columns based on whether notes exist
+        const gridTemplate = hasNotes ? "25px 1.5fr 80px 80px 60px 2fr" : "25px 2fr 90px 90px 70px";
+        
         content += `
             <div style="
                 display: grid;
-                grid-template-columns: 25px 2fr 90px 90px 70px;
-                gap: 8px;
+                grid-template-columns: ${gridTemplate};
+                gap: 6px;
                 align-items: center;
                 padding: 6px 8px;
                 margin-bottom: 4px;
@@ -722,6 +755,7 @@ const createContextAwareTooltip = (zipCode, vendors) => {
                 <div style="text-align: center;">Visitors</div>
                 <div style="text-align: center;">Print Pieces</div>
                 <div style="text-align: center;">Efficiency</div>
+                ${hasNotes ? '<div>Notes</div>' : ''}
             </div>
         `;
         
@@ -731,8 +765,8 @@ const createContextAwareTooltip = (zipCode, vendors) => {
             content += `
                 <div style="
                     display: grid;
-                    grid-template-columns: 25px 2fr 90px 90px 70px;
-                    gap: 8px;
+                    grid-template-columns: ${gridTemplate};
+                    gap: 6px;
                     align-items: center;
                     padding: 6px 8px;
                     margin-bottom: 2px;
@@ -775,6 +809,17 @@ const createContextAwareTooltip = (zipCode, vendors) => {
                         font-weight: bold;
                         font-family: monospace;
                     ">${vendor.efficiency.toFixed(1)}%</div>
+                    ${hasNotes ? `
+                        <div style="
+                            font-size: 10px;
+                            line-height: 1.3;
+                            color: #856404;
+                            word-wrap: break-word;
+                            max-height: 40px;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                        ">${vendor.notes && vendor.notes.trim() ? vendor.notes.trim() : '—'}</div>
+                    ` : ''}
                 </div>
             `;
         });
