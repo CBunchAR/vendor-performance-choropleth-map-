@@ -624,14 +624,144 @@ h1, h2, h3 {
 
 /* Vendor tooltip enhancements for overlaps */
 .vendor-tooltip {
-    max-width: 350px !important;
+    max-width: 280px !important;
     z-index: 1002;
+    font-family: Arial, sans-serif !important;
 }
 
 .vendor-tooltip .leaflet-tooltip-content {
-    line-height: 1.4;
-    max-height: 400px;
-    overflow-y: auto;
+    line-height: 1.4 !important;
+    max-height: 400px !important;
+    overflow-y: auto !important;
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+    color: #333 !important;
+    background: white !important;
+    text-shadow: none !important;
+    border: 1px solid #ccc !important;
+    border-radius: 6px !important;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.15) !important;
+}
+
+.vendor-tooltip .leaflet-tooltip-content * {
+    text-shadow: none !important;
+    background-color: transparent !important;
+}
+
+.vendor-tooltip .leaflet-tooltip-content strong {
+    color: #333 !important;
+    background: none !important;
+    text-shadow: none !important;
+}
+
+.vendor-tooltip .leaflet-tooltip-content span {
+    color: #333 !important;
+    background: none !important;
+    text-shadow: none !important;
+}
+
+/* Fix tooltip positioning and ensure visibility */
+.leaflet-tooltip {
+    background: white !important;
+    color: #333 !important;
+    border: 1px solid #ccc !important;
+    border-radius: 6px !important;
+    padding: 8px !important;
+    font-size: 13px !important;
+    line-height: 1.4 !important;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.15) !important;
+    text-shadow: none !important;
+    max-width: 280px !important;
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+}
+
+.leaflet-tooltip * {
+    text-shadow: none !important;
+    color: inherit !important;
+}
+
+/* Store tooltip styling */
+.store-tooltip {
+    max-width: 200px !important;
+    z-index: 1001;
+}
+
+.store-tooltip .leaflet-tooltip-content {
+    line-height: 1.4 !important;
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+    color: #333 !important;
+    text-shadow: none !important;
+}
+
+/* Ensure SVG patterns are visible and properly applied */
+svg#vendor-pattern-svg {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 0 !important;
+    height: 0 !important;
+    z-index: -1 !important;
+    pointer-events: none !important;
+}
+
+/* Force pattern visibility */
+path[fill^="url(#pattern-"] {
+    fill-opacity: 1 !important;
+    stroke-opacity: 1 !important;
+}
+
+/* Vendor overlap visualization enhancements */
+.leaflet-interactive[style*="url(#pattern-"] {
+    fill-opacity: 0.8 !important;
+    stroke-width: 2px !important;
+    stroke: #333 !important;
+}
+
+/* Remove any dark text shadows or overlays */
+.leaflet-popup-content,
+.leaflet-popup-content *,
+.leaflet-tooltip-content,
+.leaflet-tooltip-content * {
+    text-shadow: none !important;
+    background-color: transparent !important;
+}
+
+/* Ensure vendor names are always readable */
+.vendor-name {
+    color: #333 !important;
+    background: none !important;
+    text-shadow: none !important;
+}
+
+/* Pattern debugging - ensure patterns render */
+pattern rect {
+    shape-rendering: crispEdges !important;
+}
+
+/* Force refresh of pattern definitions */
+defs pattern {
+    color-rendering: optimizeQuality !important;
+}
+
+/* Enhanced scrollbar for vendor lists */
+.vendor-colors-list::-webkit-scrollbar {
+    width: 6px !important;
+}
+
+.vendor-colors-list::-webkit-scrollbar-track {
+    background: #f1f1f1 !important;
+    border-radius: 3px !important;
+}
+
+.vendor-colors-list::-webkit-scrollbar-thumb {
+    background: #c1c1c1 !important;
+    border-radius: 3px !important;
+}
+
+.vendor-colors-list::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8 !important;
 }
 
 /* Loading states for better UX */

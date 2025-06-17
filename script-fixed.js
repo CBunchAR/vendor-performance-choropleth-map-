@@ -97,62 +97,86 @@ const createSVGPatternDefs = () => {
         svg.style.width = '0';
         svg.style.height = '0';
         svg.style.visibility = 'hidden';
+        svg.id = 'vendor-pattern-svg';
         
         svgDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
         svgDefs.id = 'vendor-pattern-defs';
         svg.appendChild(svgDefs);
         document.body.appendChild(svg);
+        
+        console.log('Created SVG pattern container');
     }
     return svgDefs;
 };
 
 const generatePatternId = (vendorColors, efficiency) => {
-    // Create unique pattern ID based on vendor colors and efficiency
-    const colorStr = vendorColors.map(c => c.replace('#', '')).sort().join('-');
-    const efficiencyTier = getEfficiencyTier(efficiency);
-    return `vendor-pattern-${colorStr}-${efficiencyTier}`;
+    // Create simpler pattern ID
+    const colorStr = vendorColors.map(c => c.replace('#', '')).join('-');
+    return `pattern-${colorStr}`;
 };
 
 const createVendorOverlapPattern = (vendorColors, efficiency, patternId) => {
-    // Check cache first
-    if (svgPatternCache.has(patternId)) {
+    // Check if we already have this pattern
+    if (document.getElementById(patternId)) {
+        console.log(`Pattern ${patternId} already exists, reusing`);
         return patternId;
     }
     
-    if (vendorColors.length === 1) {
-        // No overlap, return solid color
+    if (vendorColors.length <= 1) {
+        console.log('Single vendor, no pattern needed');
         return null;
     }
     
+    console.log(`Creating new pattern ${patternId} for ${vendorColors.length} vendors:`, vendorColors);
+    
     const svgDefs = createSVGPatternDefs();
-    const stripeWidth = Math.max(6, Math.min(10, 40 / vendorColors.length)); // Adaptive stripe width
-    const totalWidth = stripeWidth * vendorColors.length;
+    const stripeWidth = 8; // Fixed stripe width for consistency
+    const patternSize = stripeWidth * vendorColors.length;
     
     // Create pattern element
     const pattern = document.createElementNS('http://www.w3.org/2000/svg', 'pattern');
     pattern.id = patternId;
     pattern.setAttribute('patternUnits', 'userSpaceOnUse');
-    pattern.setAttribute('width', totalWidth);
-    pattern.setAttribute('height', totalWidth);
+    pattern.setAttribute('width', patternSize);
+    pattern.setAttribute('height', patternSize);
     pattern.setAttribute('patternTransform', 'rotate(45)');
     
-    // Create stripes for each vendor - make them thicker and more visible
+    // Create background rectangle first
+    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    bg.setAttribute('x', '0');
+    bg.setAttribute('y', '0');
+    bg.setAttribute('width', patternSize);
+    bg.setAttribute('height', patternSize);
+    bg.setAttribute('fill', vendorColors[0]); // Use first vendor as background
+    pattern.appendChild(bg);
+    
+    // Create stripes for each vendor (starting from second vendor)
     vendorColors.forEach((color, index) => {
+        if (index === 0) return; // Skip first color as it's the background
+        
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         rect.setAttribute('x', index * stripeWidth);
-        rect.setAttribute('y', 0);
+        rect.setAttribute('y', '0');
         rect.setAttribute('width', stripeWidth);
-        rect.setAttribute('height', totalWidth * 2); // Extra height to ensure coverage
+        rect.setAttribute('height', patternSize * 2);
         rect.setAttribute('fill', color);
-        rect.setAttribute('stroke', 'none');
+        rect.setAttribute('opacity', '0.8');
         pattern.appendChild(rect);
     });
     
     svgDefs.appendChild(pattern);
-    svgPatternCache.set(patternId, pattern);
-    renderedPatterns.add(patternId);
+    console.log(`Successfully created pattern ${patternId}`);
     
-    console.log(`Created overlap pattern ${patternId} with ${vendorColors.length} vendors`);
+    // Verify pattern was added to DOM
+    setTimeout(() => {
+        const addedPattern = document.getElementById(patternId);
+        if (addedPattern) {
+            console.log(`✓ Pattern ${patternId} verified in DOM`);
+        } else {
+            console.error(`✗ Pattern ${patternId} NOT found in DOM`);
+        }
+    }, 50);
+    
     return patternId;
 };
 
@@ -401,21 +425,35 @@ const createVendorChoroplethLayer = () => {
             
             // Handle vendor overlaps with patterns
             if (vendorColors.length > 1) {
-                console.log(`ZIP ${zipCode} has ${vendorColors.length} vendors - creating pattern`);
+                console.log(`ZIP ${zipCode} has ${vendorColors.length} vendors - creating pattern with colors:`, vendorColors);
                 const patternId = generatePatternId(vendorColors, efficiency);
                 const actualPatternId = createVendorOverlapPattern(vendorColors, efficiency, patternId);
                 
                 if (actualPatternId) {
                     style.fillColor = `url(#${actualPatternId})`;
+                    style.fillOpacity = 0.9; // Increase opacity for better pattern visibility
                     console.log(`Applied pattern ${actualPatternId} to ZIP ${zipCode}`);
+                    
+                    // Force pattern refresh after brief delay to ensure DOM is ready
+                    setTimeout(() => {
+                        const element = document.querySelector(`path[fill="url(#${actualPatternId})"]`);
+                        if (element) {
+                            element.style.fillOpacity = '0.9';
+                            console.log(`Forced pattern refresh for ${actualPatternId}`);
+                        }
+                    }, 100);
                 } else {
-                    // Fallback to first vendor color if pattern creation fails
+                    // Fallback to mixed color if pattern creation fails
+                    console.log(`Pattern creation failed for ZIP ${zipCode}, using fallback`);
                     style.fillColor = vendorColors[0];
-                    console.log(`Pattern failed, using fallback color for ZIP ${zipCode}`);
+                    style.stroke = vendorColors[1] || vendorColors[0];
+                    style.strokeWidth = 4;
+                    style.strokeDasharray = '4,4';
                 }
             } else {
-                // Single vendor - use solid color
-                style.fillColor = vendorColors[0];
+                // Single vendor - use solid color with efficiency opacity
+                style.fillColor = getVendorColorWithEfficiency(vendorColors[0], efficiency);
+                console.log(`Single vendor ZIP ${zipCode}: using color ${style.fillColor}`);
             }
             
             // Add dashed red border for low performers if enabled
@@ -488,7 +526,15 @@ const createVendorChoroplethLayer = () => {
 const createContextAwareTooltip = (zipCode, vendors) => {
     if (vendors.length === 0) {
         return `
-            <div style="font-family: Arial, sans-serif; font-size: 13px; line-height: 1.4; color: #333;">
+            <div style="
+                font-family: Arial, sans-serif; 
+                font-size: 13px; 
+                line-height: 1.4; 
+                color: #333; 
+                max-width: 260px; 
+                word-wrap: break-word;
+                overflow-wrap: break-word;
+            ">
                 <strong>ZIP Code ${zipCode}</strong><br>
                 <em style="color: #666;">No vendor data available</em>
             </div>
@@ -507,48 +553,68 @@ const createContextAwareTooltip = (zipCode, vendors) => {
             font-size: 13px; 
             line-height: 1.4; 
             color: #333; 
-            max-width: 280px;
-            padding: 2px;
+            max-width: 260px;
+            padding: 4px;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            box-sizing: border-box;
         ">
             <div style="
                 background: #f8f9fa; 
                 padding: 8px; 
-                margin-bottom: 8px; 
+                margin-bottom: 6px; 
                 border-radius: 4px;
                 border-left: 4px solid ${efficiencyTier === 'high' ? '#28a745' : efficiencyTier === 'medium' ? '#ffc107' : '#dc3545'};
+                word-wrap: break-word;
+                overflow-wrap: break-word;
             ">
-                <strong style="font-size: 14px;">ZIP Code ${zipCode}</strong>
+                <strong style="font-size: 14px; color: #333;">ZIP Code ${zipCode}</strong>
                 ${vendors.length > 1 ? ` <span style="color: #666; font-size: 12px;">(${vendors.length} vendors)</span>` : ''}
                 <br>
-                <strong>Total Visitors:</strong> ${totalVisitors.toLocaleString()}
+                <span style="color: #333;"><strong>Visitors:</strong> ${totalVisitors.toLocaleString()}</span>
                 <br>
-                <strong>Total Prints:</strong> ${totalPrintPieces.toLocaleString()}
+                <span style="color: #333;"><strong>Prints:</strong> ${totalPrintPieces.toLocaleString()}</span>
                 <br>
-                <strong>Efficiency:</strong> ${overallEfficiency.toFixed(1)}% 
+                <span style="color: #333;"><strong>Efficiency:</strong> ${overallEfficiency.toFixed(1)}%</span>
                 <span style="
                     color: ${efficiencyTier === 'high' ? '#28a745' : efficiencyTier === 'medium' ? '#f57c00' : '#dc3545'};
                     font-weight: bold;
+                    margin-left: 4px;
                 ">(${efficiencyTier.toUpperCase()})</span>
             </div>
     `;
     
     // Vendor details section
     if (vendors.length === 1) {
-        // Single vendor - clean compact display
+        // Single vendor - clean compact display with no dark overlays
         const vendor = vendors[0];
         const vendorColor = assignVendorColor(vendor.vendor, mapData.vendorList);
         
         content += `
-            <div style="display: flex; align-items: center; margin-bottom: 6px;">
+            <div style="
+                display: flex; 
+                align-items: center; 
+                margin-bottom: 6px;
+                word-wrap: break-word;
+                overflow-wrap: break-word;
+            ">
                 <div style="
-                    width: 14px; 
-                    height: 14px; 
+                    width: 12px; 
+                    height: 12px; 
                     background-color: ${vendorColor}; 
-                    border: 1px solid #333; 
+                    border: 1px solid #666; 
                     border-radius: 2px; 
                     margin-right: 8px;
+                    flex-shrink: 0;
                 "></div>
-                <strong>${vendor.vendor}</strong>
+                <strong style="
+                    color: #333; 
+                    background: none;
+                    text-shadow: none;
+                    word-wrap: break-word;
+                    overflow-wrap: break-word;
+                    max-width: 200px;
+                ">${vendor.vendor}</strong>
             </div>
         `;
         
@@ -561,13 +627,16 @@ const createContextAwareTooltip = (zipCode, vendors) => {
                     margin-top: 6px;
                     font-size: 12px;
                     border-left: 3px solid #ffc107;
+                    color: #333;
+                    word-wrap: break-word;
+                    overflow-wrap: break-word;
                 ">
                     <strong>Notes:</strong> ${vendor.notes}
                 </div>
             `;
         }
     } else {
-        // Multiple vendors - compact list
+        // Multiple vendors - compact list with proper wrapping
         content += `<div style="margin-top: 4px;">`;
         
         vendors.forEach((vendor, index) => {
@@ -577,29 +646,51 @@ const createContextAwareTooltip = (zipCode, vendors) => {
             content += `
                 <div style="
                     display: flex; 
-                    align-items: center; 
+                    align-items: flex-start; 
                     margin-bottom: 6px; 
                     padding: 4px;
                     background: ${index % 2 === 0 ? '#f8f9fa' : 'white'};
                     border-radius: 3px;
+                    word-wrap: break-word;
+                    overflow-wrap: break-word;
                 ">
                     <div style="
-                        width: 12px; 
-                        height: 12px; 
+                        width: 10px; 
+                        height: 10px; 
                         background-color: ${vendorColor}; 
-                        border: 1px solid #333; 
+                        border: 1px solid #666; 
                         border-radius: 2px; 
                         margin-right: 6px;
+                        margin-top: 2px;
                         flex-shrink: 0;
                     "></div>
-                    <div style="flex: 1; min-width: 0;">
-                        <div style="font-weight: bold; font-size: 12px; margin-bottom: 1px;">
+                    <div style="
+                        flex: 1; 
+                        min-width: 0;
+                        word-wrap: break-word;
+                        overflow-wrap: break-word;
+                    ">
+                        <div style="
+                            font-weight: bold; 
+                            font-size: 12px; 
+                            margin-bottom: 2px;
+                            color: #333;
+                            background: none;
+                            text-shadow: none;
+                            word-wrap: break-word;
+                            overflow-wrap: break-word;
+                        ">
                             ${vendor.vendor}
                         </div>
-                        <div style="font-size: 11px; color: #666;">
-                            ${vendor.visitors.toLocaleString()} visitors • 
-                            ${vendor.printPieces.toLocaleString()} prints • 
-                            ${vendorEfficiency.toFixed(1)}%
+                        <div style="
+                            font-size: 11px; 
+                            color: #666;
+                            word-wrap: break-word;
+                            overflow-wrap: break-word;
+                        ">
+                            ${vendor.visitors.toLocaleString()} visitors<br>
+                            ${vendor.printPieces.toLocaleString()} prints<br>
+                            ${vendorEfficiency.toFixed(1)}% efficiency
                         </div>
                     </div>
                 </div>
@@ -1130,10 +1221,24 @@ const updateLegend = () => {
             content += `
                 <div style="margin-top: 12px; padding: 8px; background: #f8f9fa; border-radius: 4px;">
                     <div style="display: flex; align-items: center; margin-bottom: 4px;">
-                        <div style="width: 20px; height: 15px; background: repeating-linear-gradient(45deg, #e74c3c 0px, #e74c3c 4px, #3498db 4px, #3498db 8px); margin-right: 8px; border: 1px solid #ccc;"></div>
+                        <div style="
+                            width: 20px; 
+                            height: 15px; 
+                            background: repeating-linear-gradient(
+                                45deg, 
+                                #e74c3c 0px, 
+                                #e74c3c 3px, 
+                                #3498db 3px, 
+                                #3498db 6px,
+                                #f39c12 6px,
+                                #f39c12 9px
+                            ); 
+                            margin-right: 8px; 
+                            border: 1px solid #666;
+                        "></div>
                         <span style="font-size: 12px;"><strong>Vendor Overlaps - ${overlapCount} areas</strong></span>
                     </div>
-                    <small style="color: #666;">Striped patterns show multiple vendors in same ZIP code</small>
+                    <small style="color: #666;">Diagonal stripes show multiple vendors in same ZIP code</small>
                 </div>
             `;
         }
