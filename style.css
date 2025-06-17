@@ -598,148 +598,27 @@ h1, h2, h3 {
     right: 10px;
 }
 
-/* Enhanced Multi-Select Vendor Dropdown Styles */
-.vendor-choices {
-    margin-bottom: 0 !important;
+/* Enhanced Vendor Selection Interface */
+#vendor-checkbox-container {
+    scrollbar-width: thin;
+    scrollbar-color: #c1c1c1 #f1f1f1;
 }
 
-.vendor-choices__inner {
-    background-color: #fff;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 14px;
-    min-height: 44px;
-    overflow: hidden;
-    padding: 4px 4px 4px 8px;
-}
-
-.vendor-choices__inner:focus {
-    border-color: #007cba;
-    box-shadow: 0 0 0 2px rgba(0, 124, 186, 0.2);
-}
-
-.vendor-choices__list--multiple .vendor-choices__item {
-    background-color: #007cba;
-    border: 1px solid #005a8b;
-    border-radius: 3px;
-    color: #fff;
-    font-size: 12px;
-    margin-bottom: 3px;
-    margin-right: 4px;
-    padding: 4px 8px;
-    word-break: break-word;
-    max-width: 200px;
-}
-
-.vendor-choices__list--multiple .vendor-choices__item.is-highlighted {
-    background-color: #005a8b;
-    border-color: #004570;
-}
-
-.vendor-choices__button {
-    background-image: none;
-    border: 0;
-    color: #fff;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: bold;
-    margin-left: 4px;
-    opacity: 0.7;
-    padding: 0;
-    text-indent: 0;
-    width: auto;
-}
-
-.vendor-choices__button:hover {
-    opacity: 1;
-}
-
-.vendor-choices__button::after {
-    content: "×";
-    font-size: 16px;
-}
-
-.vendor-choices__input {
-    background-color: transparent;
-    border: 0;
-    font-size: 14px;
-    margin-bottom: 0;
-    margin-right: 0;
-    padding: 4px 0;
-}
-
-.vendor-choices__list--dropdown {
-    background-color: #fff;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    margin-top: 2px;
-    max-height: 300px;
-    overflow-y: auto;
-    padding: 4px 0;
-    z-index: 1001;
-}
-
-.vendor-choices__item--choice {
-    color: #333;
-    cursor: pointer;
-    font-size: 14px;
-    padding: 8px 12px;
-    word-wrap: break-word;
-}
-
-.vendor-choices__item--choice:hover,
-.vendor-choices__item--choice.is-highlighted {
-    background-color: #f8f9fa;
-    color: #007cba;
-}
-
-.vendor-choices__item--choice.is-selected {
-    background-color: #007cba;
-    color: #fff;
-}
-
-.vendor-choices__placeholder {
-    color: #999;
-    opacity: 1;
-}
-
-/* Performance optimization for large lists */
-.vendor-choices__list--dropdown .vendor-choices__item--choice {
-    transform: translateZ(0);
-    will-change: background-color;
-}
-
-/* Responsive design for smaller screens */
-@media (max-width: 768px) {
-    .vendor-choices__list--multiple .vendor-choices__item {
-        font-size: 11px;
-        padding: 3px 6px;
-        max-width: 150px;
-    }
-    
-    .vendor-choices__inner {
-        min-height: 40px;
-        padding: 3px 3px 3px 6px;
-    }
-}
-
-/* Custom scrollbar for vendor dropdown */
-.vendor-choices__list--dropdown::-webkit-scrollbar {
+#vendor-checkbox-container::-webkit-scrollbar {
     width: 8px;
 }
 
-.vendor-choices__list--dropdown::-webkit-scrollbar-track {
+#vendor-checkbox-container::-webkit-scrollbar-track {
     background: #f1f1f1;
     border-radius: 4px;
 }
 
-.vendor-choices__list--dropdown::-webkit-scrollbar-thumb {
+#vendor-checkbox-container::-webkit-scrollbar-thumb {
     background: #c1c1c1;
     border-radius: 4px;
 }
 
-.vendor-choices__list--dropdown::-webkit-scrollbar-thumb:hover {
+#vendor-checkbox-container::-webkit-scrollbar-thumb:hover {
     background: #a8a8a8;
 }
 
@@ -756,19 +635,19 @@ h1, h2, h3 {
 }
 
 /* Loading states for better UX */
-.vendor-choices.is-loading .vendor-choices__inner::after {
-    content: "Loading...";
+.vendor-loading::after {
+    content: "Loading vendors...";
     color: #999;
     font-style: italic;
 }
 
 /* High contrast mode support */
 @media (prefers-contrast: high) {
-    .vendor-choices__inner {
+    #vendor-checkbox-container {
         border-width: 2px;
     }
     
-    .vendor-choices__list--multiple .vendor-choices__item {
-        border-width: 2px;
+    .vendor-checkbox {
+        border-width: 2px !important;
     }
 } 

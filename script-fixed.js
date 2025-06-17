@@ -19,7 +19,6 @@ let efficiencyShading = true;
 let showStoreLocations = true;
 let highlightLowPerformers = false;
 let selectedVendors = ['all']; // Changed: Now supports multiple vendor selection
-let vendorChoices = null; // Choices.js instance for multi-select dropdown
 
 // Performance optimization variables
 let svgPatternCache = new Map(); // Cache for SVG patterns to avoid regeneration
@@ -126,7 +125,7 @@ const createVendorOverlapPattern = (vendorColors, efficiency, patternId) => {
     }
     
     const svgDefs = createSVGPatternDefs();
-    const stripeWidth = Math.max(8, Math.min(12, 60 / vendorColors.length)); // Adaptive stripe width
+    const stripeWidth = Math.max(6, Math.min(10, 40 / vendorColors.length)); // Adaptive stripe width
     const totalWidth = stripeWidth * vendorColors.length;
     
     // Create pattern element
@@ -137,7 +136,7 @@ const createVendorOverlapPattern = (vendorColors, efficiency, patternId) => {
     pattern.setAttribute('height', totalWidth);
     pattern.setAttribute('patternTransform', 'rotate(45)');
     
-    // Create stripes for each vendor
+    // Create stripes for each vendor - make them thicker and more visible
     vendorColors.forEach((color, index) => {
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         rect.setAttribute('x', index * stripeWidth);
@@ -145,6 +144,7 @@ const createVendorOverlapPattern = (vendorColors, efficiency, patternId) => {
         rect.setAttribute('width', stripeWidth);
         rect.setAttribute('height', totalWidth * 2); // Extra height to ensure coverage
         rect.setAttribute('fill', color);
+        rect.setAttribute('stroke', 'none');
         pattern.appendChild(rect);
     });
     
@@ -152,6 +152,7 @@ const createVendorOverlapPattern = (vendorColors, efficiency, patternId) => {
     svgPatternCache.set(patternId, pattern);
     renderedPatterns.add(patternId);
     
+    console.log(`Created overlap pattern ${patternId} with ${vendorColors.length} vendors`);
     return patternId;
 };
 
@@ -400,14 +401,17 @@ const createVendorChoroplethLayer = () => {
             
             // Handle vendor overlaps with patterns
             if (vendorColors.length > 1) {
+                console.log(`ZIP ${zipCode} has ${vendorColors.length} vendors - creating pattern`);
                 const patternId = generatePatternId(vendorColors, efficiency);
                 const actualPatternId = createVendorOverlapPattern(vendorColors, efficiency, patternId);
                 
                 if (actualPatternId) {
                     style.fillColor = `url(#${actualPatternId})`;
+                    console.log(`Applied pattern ${actualPatternId} to ZIP ${zipCode}`);
                 } else {
                     // Fallback to first vendor color if pattern creation fails
                     style.fillColor = vendorColors[0];
+                    console.log(`Pattern failed, using fallback color for ZIP ${zipCode}`);
                 }
             } else {
                 // Single vendor - use solid color
@@ -482,51 +486,127 @@ const createVendorChoroplethLayer = () => {
 
 // Create context-aware tooltip for vendor data
 const createContextAwareTooltip = (zipCode, vendors) => {
+    if (vendors.length === 0) {
+        return `
+            <div style="font-family: Arial, sans-serif; font-size: 13px; line-height: 1.4; color: #333;">
+                <strong>ZIP Code ${zipCode}</strong><br>
+                <em style="color: #666;">No vendor data available</em>
+            </div>
+        `;
+    }
+    
     const totalPrintPieces = vendors.reduce((sum, v) => sum + v.printPieces, 0);
     const totalVisitors = vendors.reduce((sum, v) => sum + v.visitors, 0);
     const overallEfficiency = calculateEfficiency(totalVisitors, totalPrintPieces);
+    const efficiencyTier = getEfficiencyTier(overallEfficiency);
     
+    // Unified header for all tooltips
     let content = `
-        <div style="font-family: Arial, sans-serif; line-height: 1.4; max-width: 300px;">
-            <strong>Zip Code ${zipCode}</strong><br>
+        <div style="
+            font-family: Arial, sans-serif; 
+            font-size: 13px; 
+            line-height: 1.4; 
+            color: #333; 
+            max-width: 280px;
+            padding: 2px;
+        ">
+            <div style="
+                background: #f8f9fa; 
+                padding: 8px; 
+                margin-bottom: 8px; 
+                border-radius: 4px;
+                border-left: 4px solid ${efficiencyTier === 'high' ? '#28a745' : efficiencyTier === 'medium' ? '#ffc107' : '#dc3545'};
+            ">
+                <strong style="font-size: 14px;">ZIP Code ${zipCode}</strong>
+                ${vendors.length > 1 ? ` <span style="color: #666; font-size: 12px;">(${vendors.length} vendors)</span>` : ''}
+                <br>
+                <strong>Total Visitors:</strong> ${totalVisitors.toLocaleString()}
+                <br>
+                <strong>Total Prints:</strong> ${totalPrintPieces.toLocaleString()}
+                <br>
+                <strong>Efficiency:</strong> ${overallEfficiency.toFixed(1)}% 
+                <span style="
+                    color: ${efficiencyTier === 'high' ? '#28a745' : efficiencyTier === 'medium' ? '#f57c00' : '#dc3545'};
+                    font-weight: bold;
+                ">(${efficiencyTier.toUpperCase()})</span>
+            </div>
     `;
     
-    if (vendors.length > 1) {
+    // Vendor details section
+    if (vendors.length === 1) {
+        // Single vendor - clean compact display
+        const vendor = vendors[0];
+        const vendorColor = assignVendorColor(vendor.vendor, mapData.vendorList);
+        
         content += `
-            <div style="background: #f8f9fa; padding: 8px; margin: 8px 0; border-radius: 4px;">
-                <strong>📊 Overall Summary (${vendors.length} vendors)</strong><br>
-                <strong>Total Visitors:</strong> ${totalVisitors.toLocaleString()} (6 weeks)<br>
-                <strong>Total Print Pieces:</strong> ${totalPrintPieces.toLocaleString()} (6 weeks)<br>
-                <strong>Combined Efficiency:</strong> ${overallEfficiency.toFixed(1)}%<br>
-                <strong>Performance:</strong> ${getEfficiencyTier(overallEfficiency).charAt(0).toUpperCase() + getEfficiencyTier(overallEfficiency).slice(1)} Efficiency
+            <div style="display: flex; align-items: center; margin-bottom: 6px;">
+                <div style="
+                    width: 14px; 
+                    height: 14px; 
+                    background-color: ${vendorColor}; 
+                    border: 1px solid #333; 
+                    border-radius: 2px; 
+                    margin-right: 8px;
+                "></div>
+                <strong>${vendor.vendor}</strong>
             </div>
-            <strong>📋 Individual Vendor Details:</strong><br>
         `;
         
-        vendors.forEach((vendor, index) => {
+        if (vendor.notes && vendor.notes.trim()) {
             content += `
-                <div style="margin: 6px 0; padding: 6px; background: ${index % 2 === 0 ? '#f8f9fa' : 'white'}; border-radius: 3px;">
-                    <strong style="color: ${assignVendorColor(vendor.vendor, mapData.vendorList)};">▪ ${vendor.vendor}</strong><br>
-                    <small>
-                        Visitors: ${vendor.visitors.toLocaleString()} | 
-                        Prints: ${vendor.printPieces.toLocaleString()} | 
-                        Efficiency: ${vendor.efficiency.toFixed(1)}% (${vendor.efficiencyTier})
-                        ${vendor.notes ? '<br>Notes: ' + vendor.notes : ''}
-                    </small>
+                <div style="
+                    background: #fff3cd; 
+                    padding: 6px; 
+                    border-radius: 3px; 
+                    margin-top: 6px;
+                    font-size: 12px;
+                    border-left: 3px solid #ffc107;
+                ">
+                    <strong>Notes:</strong> ${vendor.notes}
+                </div>
+            `;
+        }
+    } else {
+        // Multiple vendors - compact list
+        content += `<div style="margin-top: 4px;">`;
+        
+        vendors.forEach((vendor, index) => {
+            const vendorColor = assignVendorColor(vendor.vendor, mapData.vendorList);
+            const vendorEfficiency = vendor.efficiency;
+            
+            content += `
+                <div style="
+                    display: flex; 
+                    align-items: center; 
+                    margin-bottom: 6px; 
+                    padding: 4px;
+                    background: ${index % 2 === 0 ? '#f8f9fa' : 'white'};
+                    border-radius: 3px;
+                ">
+                    <div style="
+                        width: 12px; 
+                        height: 12px; 
+                        background-color: ${vendorColor}; 
+                        border: 1px solid #333; 
+                        border-radius: 2px; 
+                        margin-right: 6px;
+                        flex-shrink: 0;
+                    "></div>
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="font-weight: bold; font-size: 12px; margin-bottom: 1px;">
+                            ${vendor.vendor}
+                        </div>
+                        <div style="font-size: 11px; color: #666;">
+                            ${vendor.visitors.toLocaleString()} visitors • 
+                            ${vendor.printPieces.toLocaleString()} prints • 
+                            ${vendorEfficiency.toFixed(1)}%
+                        </div>
+                    </div>
                 </div>
             `;
         });
-    } else {
-        // Single vendor display
-        const vendor = vendors[0];
-        content += `
-            <strong>Vendor:</strong> ${vendor.vendor}<br>
-            <strong>Visitors:</strong> ${vendor.visitors.toLocaleString()} (6 weeks)<br>
-            <strong>Print Pieces:</strong> ${vendor.printPieces.toLocaleString()} (6 weeks)<br>
-            <strong>Efficiency:</strong> ${vendor.efficiency.toFixed(1)}% (visitors/pieces ratio)<br>
-            <strong>Performance:</strong> ${vendor.efficiencyTier.charAt(0).toUpperCase() + vendor.efficiencyTier.slice(1)} Efficiency
-            ${vendor.notes ? '<br><strong>Notes:</strong> ' + vendor.notes : ''}
-        `;
+        
+        content += `</div>`;
     }
     
     content += '</div>';
@@ -652,39 +732,44 @@ const createVendorPerformanceControls = () => {
         
         <div style="margin-bottom: 20px;">
             <label style="display: block; font-size: 14px; margin-bottom: 8px; font-weight: bold;">
-                Multi-Vendor Selection:
+                Vendor Selection:
             </label>
-            <div id="vendor-selection-info" style="font-size: 12px; color: #666; margin-bottom: 6px;">
+            <div id="vendor-selection-info" style="font-size: 12px; color: #666; margin-bottom: 8px; padding: 4px 8px; background: #f8f9fa; border-radius: 3px;">
                 All vendors selected
             </div>
-            <select id="vendor-filter" multiple style="
-                width: 100%;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                font-size: 14px;
-            ">
-            </select>
-            <div style="margin-top: 8px; display: flex; gap: 8px;">
+            <div style="margin-bottom: 8px; display: flex; gap: 8px;">
                 <button id="select-all-vendors" style="
                     flex: 1;
-                    padding: 4px 8px;
+                    padding: 6px 12px;
                     background: #28a745;
                     color: white;
                     border: none;
-                    border-radius: 3px;
+                    border-radius: 4px;
                     cursor: pointer;
                     font-size: 12px;
-                ">Select All</button>
+                    font-weight: bold;
+                ">✓ Select All</button>
                 <button id="clear-all-vendors" style="
                     flex: 1;
-                    padding: 4px 8px;
+                    padding: 6px 12px;
                     background: #dc3545;
                     color: white;
                     border: none;
-                    border-radius: 3px;
+                    border-radius: 4px;
                     cursor: pointer;
                     font-size: 12px;
-                ">Clear All</button>
+                    font-weight: bold;
+                ">✗ Clear All</button>
+            </div>
+            <div id="vendor-checkbox-container" style="
+                max-height: 200px;
+                overflow-y: auto;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                padding: 8px;
+                background: white;
+            ">
+                <!-- Vendor checkboxes will be populated here -->
             </div>
         </div>
         
@@ -749,29 +834,30 @@ const setupControlEventListeners = () => {
     
     // Select All vendors button
     document.getElementById('select-all-vendors').addEventListener('click', function() {
-        if (vendorChoices) {
-            const allOptions = mapData.vendorList.slice(); // Copy array
-            vendorChoices.setValue(allOptions);
-            selectedVendors = ['all']; // Set to show all vendors
-            updateVendorSelectionInfo();
-            if (vendorChoroplethLayer) {
-                createVendorChoroplethLayer();
-            }
-            updateLegend();
+        const checkboxes = document.querySelectorAll('.vendor-checkbox');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = true;
+        });
+        selectedVendors = ['all'];
+        updateVendorSelectionInfo();
+        if (vendorChoroplethLayer) {
+            createVendorChoroplethLayer();
         }
+        updateLegend();
     });
     
     // Clear All vendors button
     document.getElementById('clear-all-vendors').addEventListener('click', function() {
-        if (vendorChoices) {
-            vendorChoices.setValue([]);
-            selectedVendors = [];
-            updateVendorSelectionInfo();
-            if (vendorChoroplethLayer) {
-                createVendorChoroplethLayer();
-            }
-            updateLegend();
+        const checkboxes = document.querySelectorAll('.vendor-checkbox');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = false;
+        });
+        selectedVendors = [];
+        updateVendorSelectionInfo();
+        if (vendorChoroplethLayer) {
+            createVendorChoroplethLayer();
         }
+        updateLegend();
     });
     
     // Refresh data
@@ -781,14 +867,14 @@ const setupControlEventListeners = () => {
 };
 
 const updateVendorFilterDropdown = () => {
-    const dropdown = document.getElementById('vendor-filter');
-    if (!dropdown || !mapData.vendorList) return;
+    const container = document.getElementById('vendor-checkbox-container');
+    if (!container || !mapData.vendorList) return;
     
-    // Clear existing options
-    dropdown.innerHTML = '';
+    // Clear existing content
+    container.innerHTML = '';
     
-    // Add vendor options with performance data for sorting
-    const vendorOptions = mapData.vendorList.map(vendor => {
+    // Create vendor checkboxes with performance data
+    const vendorData = mapData.vendorList.map(vendor => {
         const vendorZips = Object.values(mapData.zipcodeVendorMap)
             .flat()
             .filter(v => v.vendor === vendor);
@@ -797,103 +883,123 @@ const updateVendorFilterDropdown = () => {
             ? vendorZips.reduce((sum, v) => sum + v.efficiency, 0) / vendorZips.length 
             : 0;
         
-        const option = document.createElement('option');
-        option.value = vendor;
-        option.textContent = `${vendor} (${vendorZips.length} areas, ${avgEfficiency.toFixed(1)}% avg)`;
-        dropdown.appendChild(option);
+        const areaCount = [...new Set(
+            Object.entries(mapData.zipcodeVendorMap)
+                .filter(([zip, vendors]) => vendors.some(v => v.vendor === vendor))
+                .map(([zip]) => zip)
+        )].length;
         
         return {
-            value: vendor,
-            label: option.textContent,
-            customProperties: {
-                avgEfficiency: avgEfficiency,
-                areaCount: vendorZips.length
-            }
+            vendor,
+            avgEfficiency,
+            areaCount
         };
     });
     
-    // Sort options by efficiency (descending) then by name
-    vendorOptions.sort((a, b) => {
-        const efficiencyDiff = b.customProperties.avgEfficiency - a.customProperties.avgEfficiency;
-        return efficiencyDiff !== 0 ? efficiencyDiff : a.value.localeCompare(b.value);
+    // Sort by efficiency (descending) then by name
+    vendorData.sort((a, b) => {
+        const efficiencyDiff = b.avgEfficiency - a.avgEfficiency;
+        return efficiencyDiff !== 0 ? efficiencyDiff : a.vendor.localeCompare(b.vendor);
     });
     
-    // Initialize or update Choices.js
-    if (vendorChoices) {
-        vendorChoices.destroy();
-    }
-    
-    vendorChoices = new Choices(dropdown, {
-        removeItemButton: true,
-        searchEnabled: true,
-        searchChoices: true,
-        searchFields: ['label', 'value'],
-        searchFloor: 1,
-        searchResultLimit: 40,
-        placeholder: true,
-        placeholderValue: 'Search and select vendors...',
-        noResultsText: 'No vendors found',
-        noChoicesText: 'No vendors available',
-        itemSelectText: 'Press to select',
-        maxItemCount: -1,
-        shouldSort: false, // We've already sorted
-        choices: vendorOptions,
-        classNames: {
-            containerOuter: 'vendor-choices',
-            containerInner: 'vendor-choices__inner',
-            input: 'vendor-choices__input',
-            inputCloned: 'vendor-choices__input--cloned',
-            list: 'vendor-choices__list',
-            listItems: 'vendor-choices__list--multiple',
-            listSingle: 'vendor-choices__list--single',
-            listDropdown: 'vendor-choices__list--dropdown',
-            item: 'vendor-choices__item',
-            itemSelectable: 'vendor-choices__item--selectable',
-            itemDisabled: 'vendor-choices__item--disabled',
-            itemChoice: 'vendor-choices__item--choice',
-            placeholder: 'vendor-choices__placeholder',
-            group: 'vendor-choices__group',
-            groupHeading: 'vendor-choices__heading',
-            button: 'vendor-choices__button',
-            activeState: 'is-active',
-            focusState: 'is-focused',
-            openState: 'is-open',
-            disabledState: 'is-disabled',
-            highlightedState: 'is-highlighted',
-            hiddenState: 'is-hidden',
-            flippedState: 'is-flipped',
-            selectedState: 'is-selected'
-        }
+    // Create checkbox for each vendor
+    vendorData.forEach(({ vendor, avgEfficiency, areaCount }) => {
+        const checkboxDiv = document.createElement('div');
+        checkboxDiv.style.cssText = `
+            margin-bottom: 8px;
+            padding: 6px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        `;
+        
+        checkboxDiv.addEventListener('mouseenter', () => {
+            checkboxDiv.style.backgroundColor = '#f8f9fa';
+        });
+        
+        checkboxDiv.addEventListener('mouseleave', () => {
+            checkboxDiv.style.backgroundColor = 'transparent';
+        });
+        
+        const vendorColor = assignVendorColor(vendor, mapData.vendorList);
+        
+        checkboxDiv.innerHTML = `
+            <label style="
+                display: flex;
+                align-items: center;
+                cursor: pointer;
+                font-size: 13px;
+                line-height: 1.3;
+                margin: 0;
+            ">
+                <input type="checkbox" 
+                       class="vendor-checkbox" 
+                       data-vendor="${vendor}" 
+                       checked
+                       style="
+                           margin-right: 8px;
+                           transform: scale(1.1);
+                           cursor: pointer;
+                       ">
+                <div style="
+                    width: 16px;
+                    height: 16px;
+                    background-color: ${vendorColor};
+                    border: 1px solid #333;
+                    border-radius: 3px;
+                    margin-right: 8px;
+                    flex-shrink: 0;
+                "></div>
+                <div style="flex: 1; min-width: 0;">
+                    <div style="
+                        font-weight: bold;
+                        color: #333;
+                        word-break: break-word;
+                        margin-bottom: 2px;
+                    ">${vendor}</div>
+                    <div style="
+                        font-size: 11px;
+                        color: #666;
+                        display: flex;
+                        justify-content: space-between;
+                    ">
+                        <span>${areaCount} areas</span>
+                        <span>${avgEfficiency.toFixed(1)}% avg</span>
+                    </div>
+                </div>
+            </label>
+        `;
+        
+        container.appendChild(checkboxDiv);
     });
     
-    // Set initial selection to all vendors
-    vendorChoices.setValue(mapData.vendorList);
+    // Add event listeners to checkboxes
+    container.addEventListener('change', handleVendorCheckboxChange);
+    
+    // Set initial state - all vendors selected
     selectedVendors = ['all'];
-    
-    // Handle selection changes
-    dropdown.addEventListener('choice', function(event) {
-        updateSelectedVendors();
-    });
-    
-    dropdown.addEventListener('removeItem', function(event) {
-        updateSelectedVendors();
-    });
-    
     updateVendorSelectionInfo();
-    console.log('Updated vendor multi-select dropdown with', mapData.vendorList.length, 'vendors');
+    
+    console.log('Updated vendor checkbox interface with', mapData.vendorList.length, 'vendors');
 };
 
-const updateSelectedVendors = () => {
-    if (!vendorChoices) return;
+const handleVendorCheckboxChange = (event) => {
+    if (event.target.classList.contains('vendor-checkbox')) {
+        updateSelectedVendorsFromCheckboxes();
+    }
+};
+
+const updateSelectedVendorsFromCheckboxes = () => {
+    const checkboxes = document.querySelectorAll('.vendor-checkbox');
+    const checkedVendors = Array.from(checkboxes)
+        .filter(cb => cb.checked)
+        .map(cb => cb.dataset.vendor);
     
-    const currentValues = vendorChoices.getValue(true); // Get array of selected values
-    
-    if (currentValues.length === 0) {
+    if (checkedVendors.length === 0) {
         selectedVendors = [];
-    } else if (currentValues.length === mapData.vendorList.length) {
+    } else if (checkedVendors.length === mapData.vendorList.length) {
         selectedVendors = ['all'];
     } else {
-        selectedVendors = currentValues;
+        selectedVendors = checkedVendors;
     }
     
     updateVendorSelectionInfo();
@@ -914,12 +1020,15 @@ const updateVendorSelectionInfo = () => {
     if (selectedVendors.includes('all')) {
         infoElement.textContent = `All vendors selected (${mapData.vendorList.length} total)`;
         infoElement.style.color = '#28a745';
+        infoElement.style.backgroundColor = '#d4edda';
     } else if (selectedVendors.length === 0) {
-        infoElement.textContent = 'No vendors selected';
+        infoElement.textContent = 'No vendors selected - map will be empty';
         infoElement.style.color = '#dc3545';
+        infoElement.style.backgroundColor = '#f8d7da';
     } else {
         infoElement.textContent = `${selectedVendors.length} of ${mapData.vendorList.length} vendors selected`;
         infoElement.style.color = '#007cba';
+        infoElement.style.backgroundColor = '#cce7f0';
     }
 };
 
