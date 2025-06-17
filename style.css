@@ -624,14 +624,14 @@ h1, h2, h3 {
 
 /* Vendor tooltip enhancements for overlaps */
 .vendor-tooltip {
-    max-width: 240px !important;
+    max-width: 380px !important;
     z-index: 1002;
     font-family: Arial, sans-serif !important;
 }
 
 .vendor-tooltip .leaflet-tooltip-content {
-    line-height: 1.3 !important;
-    max-height: 300px !important;
+    line-height: 1.4 !important;
+    max-height: 500px !important;
     overflow-y: auto !important;
     word-wrap: break-word !important;
     overflow-wrap: break-word !important;
@@ -641,7 +641,7 @@ h1, h2, h3 {
     border: 1px solid #ccc !important;
     border-radius: 6px !important;
     box-shadow: 0 3px 12px rgba(0, 0, 0, 0.15) !important;
-    padding: 4px !important;
+    padding: 6px !important;
     margin: 0 !important;
 }
 
@@ -656,12 +656,12 @@ h1, h2, h3 {
     color: #333 !important;
     border: 1px solid #ccc !important;
     border-radius: 6px !important;
-    padding: 4px !important;
-    font-size: 12px !important;
-    line-height: 1.3 !important;
+    padding: 6px !important;
+    font-size: 13px !important;
+    line-height: 1.4 !important;
     box-shadow: 0 3px 12px rgba(0, 0, 0, 0.15) !important;
     text-shadow: none !important;
-    max-width: 240px !important;
+    max-width: 380px !important;
     word-wrap: break-word !important;
     overflow-wrap: break-word !important;
     white-space: normal !important;
@@ -675,17 +675,17 @@ h1, h2, h3 {
 
 /* Store tooltip styling */
 .store-tooltip {
-    max-width: 180px !important;
+    max-width: 220px !important;
     z-index: 1001;
 }
 
 .store-tooltip .leaflet-tooltip-content {
-    line-height: 1.3 !important;
+    line-height: 1.4 !important;
     word-wrap: break-word !important;
     overflow-wrap: break-word !important;
     color: #333 !important;
     text-shadow: none !important;
-    padding: 4px !important;
+    padding: 6px !important;
 }
 
 /* Ensure SVG patterns are visible and properly applied */
