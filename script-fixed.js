@@ -2,6 +2,7 @@
 let map;
 let vendorChoroplethLayer;
 let storeLocationsLayer;
+let vendorDotsLayer; // New: Layer for vendor overlap dots
 let geoJsonData;
 
 // Global variables for data
@@ -286,10 +287,16 @@ const loadDataLayers = async () => {
 const createVendorChoroplethLayer = () => {
     console.log('Creating vendor choropleth layer...');
     
-    // Remove existing layer if it exists
+    // Remove existing layers if they exist
     if (vendorChoroplethLayer) {
         map.removeLayer(vendorChoroplethLayer);
     }
+    if (vendorDotsLayer) {
+        map.removeLayer(vendorDotsLayer);
+    }
+    
+    // Create new dots layer for vendor overlaps
+    vendorDotsLayer = L.layerGroup();
     
     vendorChoroplethLayer = L.geoJson(geoJsonData, {
         style: function(feature) {
@@ -314,47 +321,17 @@ const createVendorChoroplethLayer = () => {
                 };
             }
             
-            const vendorColors = relevantVendors.map(v => assignVendorColor(v.vendor, mapData.vendorList));
+            // Get dominant vendor (highest print quantity among relevant vendors)
+            const dominantVendor = getDominantVendor(relevantVendors);
+            const dominantColor = assignVendorColor(dominantVendor.vendor, mapData.vendorList);
             const efficiency = getZipEfficiency(zipCode, selectedVendors);
-            const opacity = efficiencyShading ? getEfficiencyOpacity(efficiency) : 0.7;
             
             let style = {
                 weight: 2,
                 color: '#333333',
-                fillOpacity: opacity
+                fillColor: getVendorColorWithEfficiency(dominantColor, efficiency),
+                fillOpacity: efficiencyShading ? getEfficiencyOpacity(efficiency) : 0.7
             };
-            
-            // Check if this ZIP has overlaps (multiple vendors originally, regardless of current selection)
-            const hasMultipleVendorsOriginally = vendorsInZip && vendorsInZip.length > 1;
-            const hasMultipleRelevantVendors = relevantVendors.length > 1;
-            
-            if (hasMultipleRelevantVendors) {
-                // Multiple relevant vendors selected - use color blending
-                console.log(`ZIP ${zipCode}: Multiple relevant vendors (${relevantVendors.length}) - applying color blending`);
-                
-                // Use weighted color blending based on market presence
-                const blendedColor = blendColorsWeighted(relevantVendors);
-                style.fillColor = getVendorColorWithEfficiency(blendedColor, efficiency);
-                style.fillOpacity = opacity;
-                
-                // Clean border styling - no dashes!
-                style.color = '#333333';
-                style.weight = 2;
-                
-                console.log(`Applied blended color ${blendedColor} to ZIP ${zipCode}`);
-            } else if (hasMultipleVendorsOriginally && relevantVendors.length === 1) {
-                // Single vendor selected from multi-vendor ZIP - show with subtle indicator
-                console.log(`ZIP ${zipCode}: Single vendor from multi-vendor area`);
-                style.fillColor = getVendorColorWithEfficiency(vendorColors[0], efficiency);
-                style.fillOpacity = opacity * 0.85; // Slightly more transparent to indicate more vendors available
-                style.color = '#ff8c00'; // Orange border to indicate multi-vendor ZIP
-                style.weight = 2;
-                // No dashed array - clean solid border
-            } else {
-                // Single vendor ZIP - normal display
-                style.fillColor = getVendorColorWithEfficiency(vendorColors[0], efficiency);
-                console.log(`ZIP ${zipCode}: Single vendor area - normal display`);
-            }
             
             // Add dashed red border for low performers if enabled
             if (highlightLowPerformers && getEfficiencyTier(efficiency) === 'low') {
@@ -362,6 +339,8 @@ const createVendorChoroplethLayer = () => {
                 style.weight = 3;
                 style.dashArray = '8, 4';
             }
+            
+            console.log(`ZIP ${zipCode}: Dominant vendor=${dominantVendor.vendor}, ${relevantVendors.length} total vendors`);
             
             return style;
         },
@@ -376,6 +355,11 @@ const createVendorChoroplethLayer = () => {
                     : vendorsInZip.filter(v => selectedVendors.includes(v.vendor));
                 
                 if (relevantVendors.length > 0) {
+                    // Create vendor overlap dots if multiple vendors
+                    if (relevantVendors.length > 1) {
+                        createVendorOverlapDots(layer, zipCode, relevantVendors);
+                    }
+                    
                     // Create context-aware tooltip
                     const tooltipContent = createContextAwareTooltip(zipCode, relevantVendors);
                     
@@ -417,9 +401,203 @@ const createVendorChoroplethLayer = () => {
     // Check if layer should be visible
     if (document.getElementById('toggle-vendor-choropleth')?.checked !== false) {
         vendorChoroplethLayer.addTo(map);
+        vendorDotsLayer.addTo(map);
     }
     
-    console.log('Vendor choropleth layer created with multi-vendor support');
+    console.log('Vendor choropleth layer created with dominant vendor coloring and overlap dots');
+};
+
+// Utility function to calculate the geometric centroid of a polygon
+const calculatePolygonCentroid = (coordinates, geometryType) => {
+    let totalArea = 0;
+    let centroidLat = 0;
+    let centroidLng = 0;
+    
+    const processRing = (ring) => {
+        let area = 0;
+        let lat = 0;
+        let lng = 0;
+        
+        for (let i = 0; i < ring.length - 1; i++) {
+            const x0 = ring[i][0];
+            const y0 = ring[i][1];
+            const x1 = ring[i + 1][0];
+            const y1 = ring[i + 1][1];
+            
+            const a = x0 * y1 - x1 * y0;
+            area += a;
+            lat += (y0 + y1) * a;
+            lng += (x0 + x1) * a;
+        }
+        
+        area *= 0.5;
+        if (area !== 0) {
+            lat /= (6 * area);
+            lng /= (6 * area);
+        }
+        
+        return { area: Math.abs(area), lat, lng };
+    };
+    
+    if (geometryType === 'Polygon') {
+        const result = processRing(coordinates[0]);
+        return L.latLng(result.lat, result.lng);
+    } else if (geometryType === 'MultiPolygon') {
+        coordinates.forEach(polygon => {
+            const result = processRing(polygon[0]);
+            const area = result.area;
+            
+            totalArea += area;
+            centroidLat += result.lat * area;
+            centroidLng += result.lng * area;
+        });
+        
+        if (totalArea > 0) {
+            centroidLat /= totalArea;
+            centroidLng /= totalArea;
+        }
+        
+        return L.latLng(centroidLat, centroidLng);
+    }
+    
+    return null;
+};
+
+// Utility function to find a point guaranteed to be inside the polygon
+const findPointInPolygon = (zipLayer) => {
+    const bounds = zipLayer.getBounds();
+    const boundsCenter = bounds.getCenter();
+    
+    // Method 1: Try the geometric centroid first
+    try {
+        const geometricCentroid = calculatePolygonCentroid(
+            zipLayer.feature.geometry.coordinates, 
+            zipLayer.feature.geometry.type
+        );
+        
+        if (geometricCentroid && isPointInPolygon(geometricCentroid, zipLayer)) {
+            return geometricCentroid;
+        }
+    } catch (e) {
+        console.warn('Geometric centroid calculation failed:', e);
+    }
+    
+    // Method 2: Try multiple candidate points within bounds
+    const candidatePoints = [
+        boundsCenter, // Bounds center
+        L.latLng(bounds.getNorth() * 0.8 + bounds.getSouth() * 0.2, bounds.getEast() * 0.8 + bounds.getWest() * 0.2),
+        L.latLng(bounds.getNorth() * 0.2 + bounds.getSouth() * 0.8, bounds.getEast() * 0.2 + bounds.getWest() * 0.8),
+        L.latLng(bounds.getNorth() * 0.6 + bounds.getSouth() * 0.4, bounds.getEast() * 0.6 + bounds.getWest() * 0.4),
+        L.latLng(bounds.getNorth() * 0.4 + bounds.getSouth() * 0.6, bounds.getEast() * 0.4 + bounds.getWest() * 0.6),
+        L.latLng(bounds.getNorth() * 0.5 + bounds.getSouth() * 0.5, bounds.getEast() * 0.3 + bounds.getWest() * 0.7),
+        L.latLng(bounds.getNorth() * 0.5 + bounds.getSouth() * 0.5, bounds.getEast() * 0.7 + bounds.getWest() * 0.3)
+    ];
+    
+    // Test each candidate point
+    for (const point of candidatePoints) {
+        if (isPointInPolygon(point, zipLayer)) {
+            return point;
+        }
+    }
+    
+    // Fallback: Use bounds center (should work in most cases)
+    return boundsCenter;
+};
+
+// Simple point-in-polygon test using ray casting
+const isPointInPolygon = (point, zipLayer) => {
+    try {
+        const coordinates = zipLayer.feature.geometry.coordinates;
+        const lat = point.lat;
+        const lng = point.lng;
+        
+        const testRing = (ring) => {
+            let inside = false;
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const xi = ring[i][0], yi = ring[i][1];
+                const xj = ring[j][0], yj = ring[j][1];
+                
+                if (((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+                    inside = !inside;
+                }
+            }
+            return inside;
+        };
+        
+        if (zipLayer.feature.geometry.type === 'Polygon') {
+            return testRing(coordinates[0]);
+        } else if (zipLayer.feature.geometry.type === 'MultiPolygon') {
+            return coordinates.some(polygon => testRing(polygon[0]));
+        }
+        
+        return false;
+    } catch (e) {
+        console.warn('Point-in-polygon test failed:', e);
+        return true; // Assume it's inside if test fails
+    }
+};
+
+// Create small colored dots for additional vendors in multi-vendor ZIP codes
+const createVendorOverlapDots = (zipLayer, zipCode, relevantVendors) => {
+    if (relevantVendors.length <= 1) return;
+    
+    // Get the dominant vendor
+    const dominantVendor = getDominantVendor(relevantVendors);
+    const additionalVendors = getAdditionalVendors(relevantVendors, dominantVendor);
+    
+    if (additionalVendors.length === 0) return;
+    
+    // Find a reliable center point within the polygon
+    const centerPoint = findPointInPolygon(zipLayer);
+    console.log(`ZIP ${zipCode}: Using verified center point [${centerPoint.lat.toFixed(6)}, ${centerPoint.lng.toFixed(6)}]`);
+    
+    // Create small squares/diamonds for additional vendors positioned consistently at center
+    additionalVendors.forEach((vendor, index) => {
+        const vendorColor = assignVendorColor(vendor.vendor, mapData.vendorList);
+        
+        // Position squares in a tight grid pattern around the verified center
+        const gridSize = Math.ceil(Math.sqrt(additionalVendors.length));
+        const row = Math.floor(index / gridSize);
+        const col = index % gridSize;
+        
+        // Use very small offsets to ensure we stay within the polygon
+        const offsetLat = (row - (gridSize - 1) / 2) * 0.001; // Further reduced
+        const offsetLng = (col - (gridSize - 1) / 2) * 0.001; // Further reduced
+        
+        const squareLat = centerPoint.lat + offsetLat;
+        const squareLng = centerPoint.lng + offsetLng;
+        
+        // Create a square marker using DivIcon for better shape control
+        const squareMarker = L.marker([squareLat, squareLng], {
+            icon: L.divIcon({
+                className: 'vendor-square-marker',
+                html: `<div style="
+                    width: 12px;
+                    height: 12px;
+                    background-color: ${vendorColor};
+                    border: 2px solid #ffffff;
+                    border-radius: 2px;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+                    transform: rotate(45deg);
+                    transform-origin: center;
+                "></div>`,
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            })
+        });
+        
+        // No tooltip for vendor squares - ZIP tooltip shows all vendor info
+        
+        // Add click handler to highlight this vendor
+        squareMarker.on('click', function(e) {
+            e.stopPropagation(); // Prevent ZIP click event
+            highlightVendorTerritory(vendor.vendor);
+        });
+        
+        vendorDotsLayer.addLayer(squareMarker);
+    });
+    
+    console.log(`Created ${additionalVendors.length} vendor squares for ZIP ${zipCode} at verified center position`);
 };
 
 // Create context-aware tooltip for vendor data
@@ -431,7 +609,7 @@ const createContextAwareTooltip = (zipCode, vendors) => {
                 font-size: 14px; 
                 line-height: 1.4; 
                 color: #333; 
-                max-width: 450px; 
+                max-width: 550px; 
                 word-wrap: break-word;
                 padding: 10px;
             ">
@@ -453,7 +631,7 @@ const createContextAwareTooltip = (zipCode, vendors) => {
             font-size: 14px; 
             line-height: 1.4; 
             color: #333; 
-            max-width: 450px;
+            max-width: 550px;
             padding: 10px;
             word-wrap: break-word;
             box-sizing: border-box;
@@ -487,7 +665,7 @@ const createContextAwareTooltip = (zipCode, vendors) => {
             </div>
     `;
     
-    // Vendor details with much improved spacing
+    // Vendor details with much improved spacing and table format
     if (vendors.length === 1) {
         const vendor = vendors[0];
         const vendorColor = assignVendorColor(vendor.vendor, mapData.vendorList);
@@ -519,9 +697,33 @@ const createContextAwareTooltip = (zipCode, vendors) => {
             </div>
         `;
     } else {
-        // Multiple vendors with much better layout
+        // Multiple vendors with enhanced table layout
         content += `<div style="margin-top: 8px;">`;
         content += `<div style="font-weight: bold; margin-bottom: 10px; font-size: 13px; color: #555;">Vendor Performance Details:</div>`;
+        
+        // Table header
+        content += `
+            <div style="
+                display: grid;
+                grid-template-columns: 25px 2fr 90px 90px 70px;
+                gap: 8px;
+                align-items: center;
+                padding: 6px 8px;
+                margin-bottom: 4px;
+                background: #e9ecef;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: bold;
+                color: #495057;
+                border: 1px solid #dee2e6;
+            ">
+                <div></div>
+                <div>Vendor Name</div>
+                <div style="text-align: center;">Visitors</div>
+                <div style="text-align: center;">Print Pieces</div>
+                <div style="text-align: center;">Efficiency</div>
+            </div>
+        `;
         
         vendors.forEach((vendor, index) => {
             const vendorColor = assignVendorColor(vendor.vendor, mapData.vendorList);
@@ -529,11 +731,11 @@ const createContextAwareTooltip = (zipCode, vendors) => {
             content += `
                 <div style="
                     display: grid;
-                    grid-template-columns: 25px 2fr 1fr 1fr;
-                    gap: 10px;
+                    grid-template-columns: 25px 2fr 90px 90px 70px;
+                    gap: 8px;
                     align-items: center;
-                    padding: 8px;
-                    margin-bottom: 6px;
+                    padding: 6px 8px;
+                    margin-bottom: 2px;
                     background: ${index % 2 === 0 ? '#f8f9fa' : 'white'};
                     border-radius: 4px;
                     font-size: 12px;
@@ -549,25 +751,30 @@ const createContextAwareTooltip = (zipCode, vendors) => {
                     <div style="
                         font-weight: bold;
                         word-wrap: break-word;
-                        font-size: 13px;
+                        font-size: 12px;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
                     ">${vendor.vendor}</div>
                     <div style="
                         text-align: center;
                         color: #666;
                         font-size: 11px;
-                    ">
-                        ${vendor.visitors.toLocaleString()}<br>
-                        <span style="font-size: 10px;">visitors</span>
-                    </div>
+                        font-family: monospace;
+                    ">${vendor.visitors.toLocaleString()}</div>
+                    <div style="
+                        text-align: center;
+                        color: #666;
+                        font-size: 11px;
+                        font-family: monospace;
+                        font-weight: bold;
+                    ">${vendor.printPieces.toLocaleString()}</div>
                     <div style="
                         text-align: center;
                         color: #666;
                         font-size: 11px;
                         font-weight: bold;
-                    ">
-                        ${vendor.efficiency.toFixed(1)}%<br>
-                        <span style="font-size: 10px;">efficiency</span>
-                    </div>
+                        font-family: monospace;
+                    ">${vendor.efficiency.toFixed(1)}%</div>
                 </div>
             `;
         });
@@ -590,23 +797,49 @@ const createStoreLocationsLayer = () => {
     storeLocationsLayer = L.layerGroup();
     
     mapData.storeData.forEach(store => {
+        // Ensure store has valid data
+        if (!store.name || isNaN(store.latitude) || isNaN(store.longitude)) {
+            console.warn('Skipping invalid store data:', store);
+            return;
+        }
+        
         const marker = L.marker([store.latitude, store.longitude], {
             icon: L.divIcon({
                 className: 'store-marker',
-                html: '<div style="background: #2c3e50; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3);"></div>',
+                html: '<div style="background: #2c3e50; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3); cursor: pointer;"></div>',
                 iconSize: [16, 16],
                 iconAnchor: [8, 8]
             })
         });
         
-        marker.bindTooltip(`
-            <div style="font-family: Arial, sans-serif; line-height: 1.4;">
-                <strong>${store.name}</strong><br>
-                ${store.address}
+        // Enhanced tooltip for store locations
+        const tooltipContent = `
+            <div style="
+                font-family: Arial, sans-serif; 
+                line-height: 1.4; 
+                padding: 8px; 
+                max-width: 250px;
+                color: #333;
+            ">
+                <div style="font-weight: bold; margin-bottom: 4px; color: #2c3e50;">
+                    ${store.name}
+                </div>
+                <div style="font-size: 12px; color: #666;">
+                    ${store.address || 'Address not available'}
+                </div>
             </div>
-        `, {
+        `;
+        
+        marker.bindTooltip(tooltipContent, {
             sticky: true,
-            className: 'store-tooltip'
+            className: 'store-tooltip',
+            direction: 'top',
+            offset: [0, -10]
+        });
+        
+        // Add click interaction for stores if needed
+        marker.on('click', function() {
+            console.log('Store clicked:', store.name);
         });
         
         storeLocationsLayer.addLayer(marker);
@@ -616,7 +849,7 @@ const createStoreLocationsLayer = () => {
         storeLocationsLayer.addTo(map);
     }
     
-    console.log('Store locations layer created');
+    console.log(`Store locations layer created with ${mapData.storeData.length} stores`);
 };
 
 // Highlight vendor territory
@@ -763,8 +996,16 @@ const setupControlEventListeners = () => {
     document.getElementById('toggle-vendor-choropleth').addEventListener('change', function(e) {
         if (e.target.checked && vendorChoroplethLayer) {
             vendorChoroplethLayer.addTo(map);
-        } else if (vendorChoroplethLayer) {
-            map.removeLayer(vendorChoroplethLayer);
+            if (vendorDotsLayer) {
+                vendorDotsLayer.addTo(map);
+            }
+        } else {
+            if (vendorChoroplethLayer) {
+                map.removeLayer(vendorChoroplethLayer);
+            }
+            if (vendorDotsLayer) {
+                map.removeLayer(vendorDotsLayer);
+            }
         }
     });
     
@@ -1099,48 +1340,48 @@ const updateLegend = () => {
                         <div style="
                             width: 20px; 
                             height: 15px; 
-                            background: linear-gradient(45deg, #e74c3c 0%, #8e44ad 50%, #3498db 100%);
-                            border: 1px solid #333;
-                            margin-right: 8px;
-                        "></div>
-                        <span style="font-size: 12px;"><strong>Multi-Vendor Overlaps - ${overlapCount} areas</strong></span>
-                    </div>
-                    <div style="display: flex; align-items: center; margin-bottom: 6px;">
-                        <div style="
-                            width: 16px; 
-                            height: 12px; 
                             background: #e74c3c;
                             border: 1px solid #333;
-                            margin-right: 4px;
-                        "></div>
-                        <span style="font-size: 10px;">+</span>
-                        <div style="
-                            width: 16px; 
-                            height: 12px; 
-                            background: #3498db;
-                            border: 1px solid #333;
-                            margin: 0 4px;
-                        "></div>
-                        <span style="font-size: 10px;">=</span>
-                        <div style="
-                            width: 16px; 
-                            height: 12px; 
-                            background: #8e44ad;
-                            border: 1px solid #333;
-                            margin-left: 4px;
-                        "></div>
-                    </div>
-                    <div style="display: flex; align-items: center; margin-bottom: 4px;">
-                        <div style="
-                            width: 20px; 
-                            height: 15px; 
-                            background: #e74c3c; 
-                            border: 2px solid #ff8c00;
                             margin-right: 8px;
-                        "></div>
-                        <span style="font-size: 11px;">Single vendor from multi-vendor ZIP</span>
+                            position: relative;
+                        ">
+                            <div style="
+                                position: absolute;
+                                top: 1px;
+                                right: 1px;
+                                width: 8px;
+                                height: 8px;
+                                background: #3498db;
+                                border: 1px solid #fff;
+                                border-radius: 1px;
+                                transform: rotate(45deg);
+                            "></div>
+                        </div>
+                        <span style="font-size: 12px;"><strong>Multi-Vendor Areas - ${overlapCount} ZIPs</strong></span>
                     </div>
-                    <small style="color: #666;">Colors blend proportionally based on market presence (print volume)</small>
+                    <div style="margin-bottom: 6px;">
+                        <div style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: #666;">
+                            <div style="
+                                width: 12px;
+                                height: 12px;
+                                background: #e74c3c;
+                                border: 1px solid #333;
+                            "></div>
+                            <span>Dominant vendor (highest print volume)</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: #666; margin-top: 4px;">
+                            <div style="
+                                width: 8px;
+                                height: 8px;
+                                background: #3498db;
+                                border: 1px solid #fff;
+                                border-radius: 1px;
+                                transform: rotate(45deg);
+                            "></div>
+                            <span>Additional vendors (diamond shapes at center)</span>
+                        </div>
+                    </div>
+                    <small style="color: #666;">Each ZIP shows the color of its dominant vendor with diamonds for others</small>
                 </div>
             `;
         }
@@ -1168,6 +1409,16 @@ const updateLegend = () => {
                         .map(([zip]) => zip)
                 )].length;
                 
+                // Count where this vendor is dominant
+                const dominantZipCount = Object.entries(mapData.zipcodeVendorMap)
+                    .filter(([zip, vendors]) => {
+                        const relevantVendors = selectedVendors.includes('all') 
+                            ? vendors 
+                            : vendors.filter(v => selectedVendors.includes(v.vendor));
+                        const dominant = getDominantVendor(relevantVendors);
+                        return dominant && dominant.vendor === vendor;
+                    }).length;
+                
                 const avgEfficiency = vendorData.length > 0 
                     ? vendorData.reduce((sum, v) => sum + v.efficiency, 0) / vendorData.length 
                     : 0;
@@ -1176,7 +1427,9 @@ const updateLegend = () => {
                     <div style="margin-bottom: 6px; display: flex; align-items: center; font-size: 11px;">
                         <div style="width: 15px; height: 15px; background: ${vendorColor}; margin-right: 8px; border: 1px solid #ccc;"></div>
                         <span style="flex: 1; word-break: break-word;">${vendor}</span>
-                        <span style="color: #666; margin-left: 4px;">${vendorZipCount} areas, ${avgEfficiency.toFixed(1)}%</span>
+                        <span style="color: #666; margin-left: 4px; font-size: 10px;">
+                            ${dominantZipCount}/${vendorZipCount} dominant, ${avgEfficiency.toFixed(1)}%
+                        </span>
                     </div>
                 `;
             });
@@ -1356,6 +1609,21 @@ const blendColorsWeighted = (vendorData) => {
     console.log('Weighted blend result:', blendedColor);
     
     return blendedColor;
+};
+
+const getDominantVendor = (vendorsInZip) => {
+    if (!vendorsInZip || vendorsInZip.length === 0) return null;
+    
+    // Find vendor with highest print quantity
+    return vendorsInZip.reduce((dominant, current) => {
+        return current.printPieces > dominant.printPieces ? current : dominant;
+    });
+};
+
+const getAdditionalVendors = (vendorsInZip, dominantVendor) => {
+    if (!vendorsInZip || !dominantVendor) return [];
+    
+    return vendorsInZip.filter(vendor => vendor.vendor !== dominantVendor.vendor);
 };
 
 // Initialize when DOM is ready
