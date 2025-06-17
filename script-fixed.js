@@ -420,30 +420,32 @@ const createVendorChoroplethLayer = () => {
             const hasMultipleRelevantVendors = relevantVendors.length > 1;
             
             if (hasMultipleRelevantVendors) {
-                // Multiple relevant vendors selected - show overlap pattern as fill
-                console.log(`ZIP ${zipCode}: Multiple relevant vendors (${relevantVendors.length}) - creating striped fill`);
+                // Multiple relevant vendors selected - use hatching with stroke patterns
+                console.log(`ZIP ${zipCode}: Multiple relevant vendors (${relevantVendors.length}) - applying hatching`);
                 
-                const overlapPattern = createOverlapStyle(vendorColors, efficiency);
-                if (overlapPattern) {
-                    // Try using the pattern as fillColor - this might work with Leaflet
-                    style.fillColor = overlapPattern;
-                    style.fillOpacity = opacity;
-                    console.log(`Applied overlap pattern fill to ZIP ${zipCode}`);
-                } else {
-                    // Fallback to alternating fill approach
-                    style.fillColor = vendorColors[0];
-                    style.fillOpacity = opacity * 0.8;
-                    // Add custom styling hook for post-processing
-                    style._hasOverlap = true;
-                    style._vendorColors = vendorColors;
-                }
+                // Use primary vendor color as fill
+                style.fillColor = getVendorColorWithEfficiency(vendorColors[0], efficiency);
+                style.fillOpacity = opacity * 0.7; // Slightly more transparent
+                
+                // Apply hatching pattern using stroke
+                const secondaryColor = vendorColors[1] || vendorColors[0];
+                style.color = secondaryColor; // Border in secondary vendor color
+                style.weight = 3;
+                style.dashArray = '6, 3'; // Dashed border to indicate overlap
+                
+                // Add additional visual indicator using opacity layers
+                style._isOverlap = true;
+                style._vendorColors = vendorColors;
+                
+                console.log(`Applied hatching to ZIP ${zipCode} with colors:`, vendorColors);
             } else if (hasMultipleVendorsOriginally && relevantVendors.length === 1) {
                 // Single vendor selected from multi-vendor ZIP - show with subtle indicator
                 console.log(`ZIP ${zipCode}: Single vendor from multi-vendor area`);
                 style.fillColor = getVendorColorWithEfficiency(vendorColors[0], efficiency);
-                style.fillOpacity = opacity * 0.9; // Slightly more transparent to indicate more vendors available
-                style.stroke = '#ff8c00'; // Orange stroke to indicate multi-vendor ZIP
-                style.strokeWidth = 1;
+                style.fillOpacity = opacity * 0.85; // Slightly more transparent to indicate more vendors available
+                style.color = '#ff8c00'; // Orange border to indicate multi-vendor ZIP
+                style.weight = 2;
+                style.dashArray = '4, 2'; // Light dashed border
             } else {
                 // Single vendor ZIP - normal display
                 style.fillColor = getVendorColorWithEfficiency(vendorColors[0], efficiency);
@@ -522,12 +524,12 @@ const createContextAwareTooltip = (zipCode, vendors) => {
         return `
             <div style="
                 font-family: Arial, sans-serif; 
-                font-size: 13px; 
+                font-size: 14px; 
                 line-height: 1.4; 
                 color: #333; 
-                max-width: 350px; 
+                max-width: 450px; 
                 word-wrap: break-word;
-                padding: 8px;
+                padding: 10px;
             ">
                 <strong>ZIP ${zipCode}</strong><br>
                 <em style="color: #666;">No vendor data</em>
@@ -540,48 +542,48 @@ const createContextAwareTooltip = (zipCode, vendors) => {
     const overallEfficiency = calculateEfficiency(totalVisitors, totalPrintPieces);
     const efficiencyTier = getEfficiencyTier(overallEfficiency);
     
-    // Enhanced header with better spacing
+    // Enhanced header with much better spacing
     let content = `
         <div style="
             font-family: Arial, sans-serif; 
-            font-size: 13px; 
+            font-size: 14px; 
             line-height: 1.4; 
             color: #333; 
-            max-width: 350px;
-            padding: 8px;
+            max-width: 450px;
+            padding: 10px;
             word-wrap: break-word;
             box-sizing: border-box;
         ">
             <div style="
                 background: ${efficiencyTier === 'high' ? '#d4edda' : efficiencyTier === 'medium' ? '#fff3cd' : '#f8d7da'}; 
-                padding: 10px; 
-                margin-bottom: 10px; 
-                border-radius: 4px;
-                border-left: 4px solid ${efficiencyTier === 'high' ? '#28a745' : efficiencyTier === 'medium' ? '#ffc107' : '#dc3545'};
+                padding: 12px; 
+                margin-bottom: 12px; 
+                border-radius: 5px;
+                border-left: 5px solid ${efficiencyTier === 'high' ? '#28a745' : efficiencyTier === 'medium' ? '#ffc107' : '#dc3545'};
             ">
-                <div style="font-weight: bold; font-size: 14px; margin-bottom: 6px;">
+                <div style="font-weight: bold; font-size: 16px; margin-bottom: 8px;">
                     ZIP Code ${zipCode} ${vendors.length > 1 ? `(${vendors.length} vendors)` : ''}
                 </div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px;">
-                    <div><strong>Visitors:</strong> ${totalVisitors.toLocaleString()}</div>
-                    <div><strong>Prints:</strong> ${totalPrintPieces.toLocaleString()}</div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; font-size: 13px;">
+                    <div><strong>Visitors:</strong><br>${totalVisitors.toLocaleString()}</div>
+                    <div><strong>Print Pieces:</strong><br>${totalPrintPieces.toLocaleString()}</div>
+                    <div><strong>Efficiency:</strong><br>${overallEfficiency.toFixed(1)}%</div>
                 </div>
-                <div style="margin-top: 6px; font-size: 12px;">
-                    <strong>Efficiency: ${overallEfficiency.toFixed(1)}%</strong>
+                <div style="margin-top: 8px; text-align: center;">
                     <span style="
-                        margin-left: 8px;
-                        padding: 2px 6px;
-                        border-radius: 3px;
-                        font-size: 10px;
+                        padding: 4px 12px;
+                        border-radius: 4px;
+                        font-size: 11px;
                         font-weight: bold;
                         background: ${efficiencyTier === 'high' ? '#28a745' : efficiencyTier === 'medium' ? '#ffc107' : '#dc3545'};
                         color: white;
-                    ">${efficiencyTier.toUpperCase()}</span>
+                        text-transform: uppercase;
+                    ">${efficiencyTier} PERFORMANCE</span>
                 </div>
             </div>
     `;
     
-    // Vendor details with improved spacing
+    // Vendor details with much improved spacing
     if (vendors.length === 1) {
         const vendor = vendors[0];
         const vendorColor = assignVendorColor(vendor.vendor, mapData.vendorList);
@@ -590,32 +592,32 @@ const createContextAwareTooltip = (zipCode, vendors) => {
             <div style="
                 display: flex; 
                 align-items: center; 
-                gap: 10px; 
-                padding: 8px;
+                gap: 12px; 
+                padding: 10px;
                 background: #f8f9fa;
-                border-radius: 4px;
-                margin-bottom: 6px;
+                border-radius: 5px;
+                margin-bottom: 8px;
             ">
                 <div style="
-                    width: 16px; 
-                    height: 16px; 
+                    width: 20px; 
+                    height: 20px; 
                     background: ${vendorColor}; 
                     border: 2px solid #666; 
-                    border-radius: 3px; 
+                    border-radius: 4px; 
                     flex-shrink: 0;
                 "></div>
                 <div style="
                     font-weight: bold; 
-                    font-size: 13px;
+                    font-size: 14px;
                     flex: 1;
                     word-wrap: break-word;
                 ">${vendor.vendor}</div>
             </div>
         `;
     } else {
-        // Multiple vendors with better layout
-        content += `<div style="margin-top: 6px;">`;
-        content += `<div style="font-weight: bold; margin-bottom: 8px; font-size: 12px;">Vendor Details:</div>`;
+        // Multiple vendors with much better layout
+        content += `<div style="margin-top: 8px;">`;
+        content += `<div style="font-weight: bold; margin-bottom: 10px; font-size: 13px; color: #555;">Vendor Performance Details:</div>`;
         
         vendors.forEach((vendor, index) => {
             const vendorColor = assignVendorColor(vendor.vendor, mapData.vendorList);
@@ -623,33 +625,44 @@ const createContextAwareTooltip = (zipCode, vendors) => {
             content += `
                 <div style="
                     display: grid;
-                    grid-template-columns: 20px 1fr auto;
-                    gap: 8px;
+                    grid-template-columns: 25px 2fr 1fr 1fr;
+                    gap: 10px;
                     align-items: center;
-                    padding: 6px;
-                    margin-bottom: 4px;
+                    padding: 8px;
+                    margin-bottom: 6px;
                     background: ${index % 2 === 0 ? '#f8f9fa' : 'white'};
-                    border-radius: 3px;
+                    border-radius: 4px;
                     font-size: 12px;
+                    border: 1px solid #e9ecef;
                 ">
                     <div style="
-                        width: 14px; 
-                        height: 14px; 
+                        width: 16px; 
+                        height: 16px; 
                         background: ${vendorColor}; 
-                        border: 1px solid #666; 
-                        border-radius: 2px;
+                        border: 2px solid #666; 
+                        border-radius: 3px;
                     "></div>
                     <div style="
                         font-weight: bold;
                         word-wrap: break-word;
+                        font-size: 13px;
                     ">${vendor.vendor}</div>
                     <div style="
-                        text-align: right;
+                        text-align: center;
                         color: #666;
                         font-size: 11px;
                     ">
-                        ${vendor.visitors.toLocaleString()} visitors<br>
-                        ${vendor.efficiency.toFixed(1)}% efficiency
+                        ${vendor.visitors.toLocaleString()}<br>
+                        <span style="font-size: 10px;">visitors</span>
+                    </div>
+                    <div style="
+                        text-align: center;
+                        color: #666;
+                        font-size: 11px;
+                        font-weight: bold;
+                    ">
+                        ${vendor.efficiency.toFixed(1)}%<br>
+                        <span style="font-size: 10px;">efficiency</span>
                     </div>
                 </div>
             `;
@@ -1182,16 +1195,8 @@ const updateLegend = () => {
                         <div style="
                             width: 20px; 
                             height: 15px; 
-                            background: repeating-linear-gradient(
-                                45deg,
-                                #e74c3c 0px,
-                                #e74c3c 6px,
-                                #3498db 6px,
-                                #3498db 12px,
-                                #f39c12 12px,
-                                #f39c12 18px
-                            );
-                            border: 1px solid #666;
+                            background: #e74c3c;
+                            border: 3px dashed #3498db;
                             margin-right: 8px;
                         "></div>
                         <span style="font-size: 12px;"><strong>Multi-Vendor Overlaps - ${overlapCount} areas</strong></span>
@@ -1201,12 +1206,12 @@ const updateLegend = () => {
                             width: 20px; 
                             height: 15px; 
                             background: #e74c3c; 
-                            border: 1px solid #ff8c00;
+                            border: 2px dashed #ff8c00;
                             margin-right: 8px;
                         "></div>
                         <span style="font-size: 11px;">Single vendor from multi-vendor ZIP</span>
                     </div>
-                    <small style="color: #666;">Striped fills show multiple vendors in same ZIP code</small>
+                    <small style="color: #666;">Dashed borders indicate multiple vendors available in ZIP code</small>
                 </div>
             `;
         }
