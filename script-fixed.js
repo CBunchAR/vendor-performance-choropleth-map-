@@ -10,14 +10,20 @@ let mapData = {
     visitorData: [],
     storeData: [],
     zipCodeData: [],
-    vendorList: []
+    vendorList: [],
+    zipcodeVendorMap: {} // New: Maps zipcodes to arrays of vendor data for overlap support
 };
 
 // Global state variables
 let efficiencyShading = true;
 let showStoreLocations = true;
 let highlightLowPerformers = false;
-let selectedVendor = 'all';
+let selectedVendors = ['all']; // Changed: Now supports multiple vendor selection
+let vendorChoices = null; // Choices.js instance for multi-select dropdown
+
+// Performance optimization variables
+let svgPatternCache = new Map(); // Cache for SVG patterns to avoid regeneration
+let renderedPatterns = new Set(); // Track which patterns have been added to DOM
 
 // Color constants
 const VENDOR_COLOR_PALETTE = [
@@ -82,6 +88,103 @@ const loadCSV = async (filepath) => {
     }).data;
 };
 
+// SVG Pattern Generation for Vendor Overlaps
+const createSVGPatternDefs = () => {
+    // Create or get existing SVG defs element for patterns
+    let svgDefs = document.getElementById('vendor-pattern-defs');
+    if (!svgDefs) {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.style.position = 'absolute';
+        svg.style.width = '0';
+        svg.style.height = '0';
+        svg.style.visibility = 'hidden';
+        
+        svgDefs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+        svgDefs.id = 'vendor-pattern-defs';
+        svg.appendChild(svgDefs);
+        document.body.appendChild(svg);
+    }
+    return svgDefs;
+};
+
+const generatePatternId = (vendorColors, efficiency) => {
+    // Create unique pattern ID based on vendor colors and efficiency
+    const colorStr = vendorColors.map(c => c.replace('#', '')).sort().join('-');
+    const efficiencyTier = getEfficiencyTier(efficiency);
+    return `vendor-pattern-${colorStr}-${efficiencyTier}`;
+};
+
+const createVendorOverlapPattern = (vendorColors, efficiency, patternId) => {
+    // Check cache first
+    if (svgPatternCache.has(patternId)) {
+        return patternId;
+    }
+    
+    if (vendorColors.length === 1) {
+        // No overlap, return solid color
+        return null;
+    }
+    
+    const svgDefs = createSVGPatternDefs();
+    const stripeWidth = Math.max(8, Math.min(12, 60 / vendorColors.length)); // Adaptive stripe width
+    const totalWidth = stripeWidth * vendorColors.length;
+    
+    // Create pattern element
+    const pattern = document.createElementNS('http://www.w3.org/2000/svg', 'pattern');
+    pattern.id = patternId;
+    pattern.setAttribute('patternUnits', 'userSpaceOnUse');
+    pattern.setAttribute('width', totalWidth);
+    pattern.setAttribute('height', totalWidth);
+    pattern.setAttribute('patternTransform', 'rotate(45)');
+    
+    // Create stripes for each vendor
+    vendorColors.forEach((color, index) => {
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', index * stripeWidth);
+        rect.setAttribute('y', 0);
+        rect.setAttribute('width', stripeWidth);
+        rect.setAttribute('height', totalWidth * 2); // Extra height to ensure coverage
+        rect.setAttribute('fill', color);
+        pattern.appendChild(rect);
+    });
+    
+    svgDefs.appendChild(pattern);
+    svgPatternCache.set(patternId, pattern);
+    renderedPatterns.add(patternId);
+    
+    return patternId;
+};
+
+const getVendorColors = (zipCode, selectedVendorsList) => {
+    const vendorsInZip = mapData.zipcodeVendorMap[zipCode];
+    if (!vendorsInZip) return [];
+    
+    // Filter to only selected vendors if not showing all
+    const relevantVendors = selectedVendorsList.includes('all') 
+        ? vendorsInZip 
+        : vendorsInZip.filter(v => selectedVendorsList.includes(v.vendor));
+    
+    return relevantVendors.map(v => assignVendorColor(v.vendor, mapData.vendorList));
+};
+
+const getZipEfficiency = (zipCode, selectedVendorsList) => {
+    const vendorsInZip = mapData.zipcodeVendorMap[zipCode];
+    if (!vendorsInZip) return 0;
+    
+    // Filter to only selected vendors if not showing all
+    const relevantVendors = selectedVendorsList.includes('all') 
+        ? vendorsInZip 
+        : vendorsInZip.filter(v => selectedVendorsList.includes(v.vendor));
+    
+    if (relevantVendors.length === 0) return 0;
+    
+    // Calculate weighted average efficiency
+    const totalPrintPieces = relevantVendors.reduce((sum, v) => sum + v.printPieces, 0);
+    const totalVisitors = relevantVendors.reduce((sum, v) => sum + v.visitors, 0);
+    
+    return calculateEfficiency(totalVisitors, totalPrintPieces);
+};
+
 const processMapData = (printData, visitorData, storeData) => {
     console.log('Processing map data...');
     console.log('Raw data received:', { printData: printData.length, visitorData: visitorData.length, storeData: storeData.length });
@@ -123,8 +226,11 @@ const processMapData = (printData, visitorData, storeData) => {
         sampleData: Object.entries(visitorsByZip).slice(0, 5)
     });
     
-    // Only process zip codes that exist in print distribution data
-    const zipCodeData = printData.map(printRow => {
+    // Create zipcode vendor map for overlap detection
+    const zipcodeVendorMap = {};
+    
+    // Process print data to build vendor overlap map
+    printData.forEach(printRow => {
         const zip = String(printRow.zip || printRow['ZIP Code'] || '').trim();
         const vendor = printRow.vendor || 'Unknown Vendor';
         let quantity = printRow.quantity || printRow.Quantity || 0;
@@ -133,24 +239,47 @@ const processMapData = (printData, visitorData, storeData) => {
             quantity = parseInt(quantity.replace(/,/g, '')) || 0;
         }
         
+        if (!zip || quantity <= 0) return;
+        
         const totalVisitors = visitorsByZip[zip] || 0;
         const efficiency = calculateEfficiency(totalVisitors, quantity);
         
-        console.log(`Processing ZIP ${zip}: vendor=${vendor}, quantity=${quantity}, visitors=${totalVisitors}, efficiency=${efficiency.toFixed(2)}%`);
-        
-        return {
-            zip: zip,
+        const vendorData = {
+            vendor: vendor,
             visitors: totalVisitors,
             printPieces: quantity,
-            vendor: vendor,
             notes: printRow.notes || '',
             efficiency: efficiency,
             efficiencyTier: getEfficiencyTier(efficiency)
         };
-    }).filter(item => item.zip && item.printPieces > 0);
+        
+        // Add to zipcode vendor map for overlap tracking
+        if (!zipcodeVendorMap[zip]) {
+            zipcodeVendorMap[zip] = [];
+        }
+        zipcodeVendorMap[zip].push(vendorData);
+        
+        console.log(`Processing ZIP ${zip}: vendor=${vendor}, quantity=${quantity}, visitors=${totalVisitors}, efficiency=${efficiency.toFixed(2)}%`);
+    });
+    
+    // Create flat zipCodeData for backward compatibility (using first vendor per zip)
+    const zipCodeData = Object.entries(zipcodeVendorMap).map(([zip, vendors]) => {
+        const primaryVendor = vendors[0]; // Use first vendor as primary for backward compatibility
+        return {
+            zip: zip,
+            visitors: primaryVendor.visitors,
+            printPieces: primaryVendor.printPieces,
+            vendor: primaryVendor.vendor,
+            notes: primaryVendor.notes,
+            efficiency: primaryVendor.efficiency,
+            efficiencyTier: primaryVendor.efficiencyTier,
+            hasOverlap: vendors.length > 1,
+            vendorCount: vendors.length
+        };
+    });
     
     // Get unique vendor list
-    const vendorList = [...new Set(zipCodeData.map(item => item.vendor))].sort();
+    const vendorList = [...new Set(Object.values(zipcodeVendorMap).flat().map(v => v.vendor))].sort();
     
     // Process store data
     const processedStoreData = storeData.map(store => ({
@@ -165,13 +294,15 @@ const processMapData = (printData, visitorData, storeData) => {
         vendors: vendorList.length,
         stores: processedStoreData.length,
         vendorList: vendorList,
+        overlappingZips: zipCodeData.filter(z => z.hasOverlap).length,
         sampleZipData: zipCodeData.slice(0, 3)
     });
     
     return {
         zipCodeData: zipCodeData,
         storeData: processedStoreData,
-        vendorList: vendorList
+        vendorList: vendorList,
+        zipcodeVendorMap: zipcodeVendorMap
     };
 };
 
@@ -210,7 +341,8 @@ const loadDataLayers = async () => {
             visitorData: visitorData,
             storeData: processedData.storeData,
             zipCodeData: processedData.zipCodeData,
-            vendorList: processedData.vendorList
+            vendorList: processedData.vendorList,
+            zipcodeVendorMap: processedData.zipcodeVendorMap
         };
         
         showLoadingIndicator('Creating map layers...');
@@ -245,9 +377,10 @@ const createVendorChoroplethLayer = () => {
     vendorChoroplethLayer = L.geoJson(geoJsonData, {
         style: function(feature) {
             const zipCode = feature.properties.ZCTA5CE20 || feature.properties.ZCTA5CE10;
-            const zipData = mapData.zipCodeData.find(d => d.zip == zipCode);
+            const vendorColors = getVendorColors(zipCode, selectedVendors);
             
-            if (!zipData || (selectedVendor !== 'all' && zipData.vendor !== selectedVendor)) {
+            // No vendors or no relevant vendors for this zip
+            if (vendorColors.length === 0) {
                 return {
                     fillColor: '#f0f0f0',
                     fillOpacity: 0.3,
@@ -256,18 +389,33 @@ const createVendorChoroplethLayer = () => {
                 };
             }
             
-            const vendorColor = assignVendorColor(zipData.vendor, mapData.vendorList);
-            const finalColor = getVendorColorWithEfficiency(vendorColor, zipData.efficiency);
+            const efficiency = getZipEfficiency(zipCode, selectedVendors);
+            const opacity = efficiencyShading ? getEfficiencyOpacity(efficiency) : 0.7;
             
             let style = {
-                fillColor: finalColor,
-                fillOpacity: efficiencyShading ? getEfficiencyOpacity(zipData.efficiency) : 0.7,
                 weight: 2,
-                color: '#333333'
+                color: '#333333',
+                fillOpacity: opacity
             };
             
+            // Handle vendor overlaps with patterns
+            if (vendorColors.length > 1) {
+                const patternId = generatePatternId(vendorColors, efficiency);
+                const actualPatternId = createVendorOverlapPattern(vendorColors, efficiency, patternId);
+                
+                if (actualPatternId) {
+                    style.fillColor = `url(#${actualPatternId})`;
+                } else {
+                    // Fallback to first vendor color if pattern creation fails
+                    style.fillColor = vendorColors[0];
+                }
+            } else {
+                // Single vendor - use solid color
+                style.fillColor = vendorColors[0];
+            }
+            
             // Add dashed red border for low performers if enabled
-            if (highlightLowPerformers && zipData.efficiencyTier === 'low') {
+            if (highlightLowPerformers && getEfficiencyTier(efficiency) === 'low') {
                 style.color = '#dc3545';
                 style.weight = 3;
                 style.dashArray = '8, 4';
@@ -277,29 +425,42 @@ const createVendorChoroplethLayer = () => {
         },
         onEachFeature: function(feature, layer) {
             const zipCode = feature.properties.ZCTA5CE20 || feature.properties.ZCTA5CE10;
-            const zipData = mapData.zipCodeData.find(d => d.zip == zipCode);
+            const vendorsInZip = mapData.zipcodeVendorMap[zipCode];
             
-            if (zipData) {
-                // Enhanced tooltip
-                layer.bindTooltip(`
-                    <div style="font-family: Arial, sans-serif; line-height: 1.4;">
-                        <strong>Zip Code ${zipData.zip}</strong><br>
-                        <strong>Vendor:</strong> ${zipData.vendor}<br>
-                        <strong>Visitors:</strong> ${zipData.visitors.toLocaleString()} (6 weeks)<br>
-                        <strong>Print Pieces:</strong> ${zipData.printPieces.toLocaleString()} (6 weeks)<br>
-                        <strong>Efficiency:</strong> ${zipData.efficiency.toFixed(1)}% (visitors/pieces ratio)<br>
-                        <strong>Performance:</strong> ${zipData.efficiencyTier.charAt(0).toUpperCase() + zipData.efficiencyTier.slice(1)} Efficiency
-                        ${zipData.notes ? '<br><strong>Notes:</strong> ' + zipData.notes : ''}
-                    </div>
-                `, {
-                    sticky: true,
-                    className: 'vendor-tooltip'
-                });
+            if (vendorsInZip) {
+                // Filter vendors based on current selection
+                const relevantVendors = selectedVendors.includes('all') 
+                    ? vendorsInZip 
+                    : vendorsInZip.filter(v => selectedVendors.includes(v.vendor));
                 
-                // Click interaction to highlight vendor territory
-                layer.on('click', function() {
-                    highlightVendorTerritory(zipData.vendor);
-                });
+                if (relevantVendors.length > 0) {
+                    // Create context-aware tooltip
+                    const tooltipContent = createContextAwareTooltip(zipCode, relevantVendors);
+                    
+                    layer.bindTooltip(tooltipContent, {
+                        sticky: true,
+                        className: 'vendor-tooltip'
+                    });
+                    
+                    // Click interaction to highlight vendor territories
+                    layer.on('click', function() {
+                        if (relevantVendors.length === 1) {
+                            highlightVendorTerritory(relevantVendors[0].vendor);
+                        } else {
+                            // For overlaps, highlight all vendors in this zip
+                            relevantVendors.forEach(v => {
+                                setTimeout(() => highlightVendorTerritory(v.vendor), Math.random() * 500);
+                            });
+                        }
+                    });
+                } else {
+                    layer.bindTooltip(`
+                        <div style="font-family: Arial, sans-serif;">
+                            <strong>Zip Code ${zipCode}</strong><br>
+                            <em>No selected vendors in this area</em>
+                        </div>
+                    `);
+                }
             } else {
                 layer.bindTooltip(`
                     <div style="font-family: Arial, sans-serif;">
@@ -316,7 +477,60 @@ const createVendorChoroplethLayer = () => {
         vendorChoroplethLayer.addTo(map);
     }
     
-    console.log('Vendor choropleth layer created');
+    console.log('Vendor choropleth layer created with multi-vendor support');
+};
+
+// Create context-aware tooltip for vendor data
+const createContextAwareTooltip = (zipCode, vendors) => {
+    const totalPrintPieces = vendors.reduce((sum, v) => sum + v.printPieces, 0);
+    const totalVisitors = vendors.reduce((sum, v) => sum + v.visitors, 0);
+    const overallEfficiency = calculateEfficiency(totalVisitors, totalPrintPieces);
+    
+    let content = `
+        <div style="font-family: Arial, sans-serif; line-height: 1.4; max-width: 300px;">
+            <strong>Zip Code ${zipCode}</strong><br>
+    `;
+    
+    if (vendors.length > 1) {
+        content += `
+            <div style="background: #f8f9fa; padding: 8px; margin: 8px 0; border-radius: 4px;">
+                <strong>📊 Overall Summary (${vendors.length} vendors)</strong><br>
+                <strong>Total Visitors:</strong> ${totalVisitors.toLocaleString()} (6 weeks)<br>
+                <strong>Total Print Pieces:</strong> ${totalPrintPieces.toLocaleString()} (6 weeks)<br>
+                <strong>Combined Efficiency:</strong> ${overallEfficiency.toFixed(1)}%<br>
+                <strong>Performance:</strong> ${getEfficiencyTier(overallEfficiency).charAt(0).toUpperCase() + getEfficiencyTier(overallEfficiency).slice(1)} Efficiency
+            </div>
+            <strong>📋 Individual Vendor Details:</strong><br>
+        `;
+        
+        vendors.forEach((vendor, index) => {
+            content += `
+                <div style="margin: 6px 0; padding: 6px; background: ${index % 2 === 0 ? '#f8f9fa' : 'white'}; border-radius: 3px;">
+                    <strong style="color: ${assignVendorColor(vendor.vendor, mapData.vendorList)};">▪ ${vendor.vendor}</strong><br>
+                    <small>
+                        Visitors: ${vendor.visitors.toLocaleString()} | 
+                        Prints: ${vendor.printPieces.toLocaleString()} | 
+                        Efficiency: ${vendor.efficiency.toFixed(1)}% (${vendor.efficiencyTier})
+                        ${vendor.notes ? '<br>Notes: ' + vendor.notes : ''}
+                    </small>
+                </div>
+            `;
+        });
+    } else {
+        // Single vendor display
+        const vendor = vendors[0];
+        content += `
+            <strong>Vendor:</strong> ${vendor.vendor}<br>
+            <strong>Visitors:</strong> ${vendor.visitors.toLocaleString()} (6 weeks)<br>
+            <strong>Print Pieces:</strong> ${vendor.printPieces.toLocaleString()} (6 weeks)<br>
+            <strong>Efficiency:</strong> ${vendor.efficiency.toFixed(1)}% (visitors/pieces ratio)<br>
+            <strong>Performance:</strong> ${vendor.efficiencyTier.charAt(0).toUpperCase() + vendor.efficiencyTier.slice(1)} Efficiency
+            ${vendor.notes ? '<br><strong>Notes:</strong> ' + vendor.notes : ''}
+        `;
+    }
+    
+    content += '</div>';
+    return content;
 };
 
 // Create store locations layer
@@ -438,17 +652,40 @@ const createVendorPerformanceControls = () => {
         
         <div style="margin-bottom: 20px;">
             <label style="display: block; font-size: 14px; margin-bottom: 8px; font-weight: bold;">
-                Vendor Filter:
+                Multi-Vendor Selection:
             </label>
-            <select id="vendor-filter" style="
+            <div id="vendor-selection-info" style="font-size: 12px; color: #666; margin-bottom: 6px;">
+                All vendors selected
+            </div>
+            <select id="vendor-filter" multiple style="
                 width: 100%;
-                padding: 6px 8px;
                 border: 1px solid #ddd;
                 border-radius: 4px;
                 font-size: 14px;
             ">
-                <option value="all">All Vendors</option>
             </select>
+            <div style="margin-top: 8px; display: flex; gap: 8px;">
+                <button id="select-all-vendors" style="
+                    flex: 1;
+                    padding: 4px 8px;
+                    background: #28a745;
+                    color: white;
+                    border: none;
+                    border-radius: 3px;
+                    cursor: pointer;
+                    font-size: 12px;
+                ">Select All</button>
+                <button id="clear-all-vendors" style="
+                    flex: 1;
+                    padding: 4px 8px;
+                    background: #dc3545;
+                    color: white;
+                    border: none;
+                    border-radius: 3px;
+                    cursor: pointer;
+                    font-size: 12px;
+                ">Clear All</button>
+            </div>
         </div>
         
         <div style="border-top: 1px solid #eee; padding-top: 15px;">
@@ -510,13 +747,31 @@ const setupControlEventListeners = () => {
         }
     });
     
-    // Vendor filter
-    document.getElementById('vendor-filter').addEventListener('change', function(e) {
-        selectedVendor = e.target.value;
-        if (vendorChoroplethLayer) {
-            createVendorChoroplethLayer();
+    // Select All vendors button
+    document.getElementById('select-all-vendors').addEventListener('click', function() {
+        if (vendorChoices) {
+            const allOptions = mapData.vendorList.slice(); // Copy array
+            vendorChoices.setValue(allOptions);
+            selectedVendors = ['all']; // Set to show all vendors
+            updateVendorSelectionInfo();
+            if (vendorChoroplethLayer) {
+                createVendorChoroplethLayer();
+            }
+            updateLegend();
         }
-        updateLegend();
+    });
+    
+    // Clear All vendors button
+    document.getElementById('clear-all-vendors').addEventListener('click', function() {
+        if (vendorChoices) {
+            vendorChoices.setValue([]);
+            selectedVendors = [];
+            updateVendorSelectionInfo();
+            if (vendorChoroplethLayer) {
+                createVendorChoroplethLayer();
+            }
+            updateLegend();
+        }
     });
     
     // Refresh data
@@ -529,18 +784,143 @@ const updateVendorFilterDropdown = () => {
     const dropdown = document.getElementById('vendor-filter');
     if (!dropdown || !mapData.vendorList) return;
     
-    // Clear existing options except "All Vendors"
-    dropdown.innerHTML = '<option value="all">All Vendors</option>';
+    // Clear existing options
+    dropdown.innerHTML = '';
     
-    // Add vendor options
-    mapData.vendorList.forEach(vendor => {
+    // Add vendor options with performance data for sorting
+    const vendorOptions = mapData.vendorList.map(vendor => {
+        const vendorZips = Object.values(mapData.zipcodeVendorMap)
+            .flat()
+            .filter(v => v.vendor === vendor);
+        
+        const avgEfficiency = vendorZips.length > 0 
+            ? vendorZips.reduce((sum, v) => sum + v.efficiency, 0) / vendorZips.length 
+            : 0;
+        
         const option = document.createElement('option');
         option.value = vendor;
-        option.textContent = vendor;
+        option.textContent = `${vendor} (${vendorZips.length} areas, ${avgEfficiency.toFixed(1)}% avg)`;
         dropdown.appendChild(option);
+        
+        return {
+            value: vendor,
+            label: option.textContent,
+            customProperties: {
+                avgEfficiency: avgEfficiency,
+                areaCount: vendorZips.length
+            }
+        };
     });
     
-    console.log('Updated vendor filter dropdown with', mapData.vendorList.length, 'vendors');
+    // Sort options by efficiency (descending) then by name
+    vendorOptions.sort((a, b) => {
+        const efficiencyDiff = b.customProperties.avgEfficiency - a.customProperties.avgEfficiency;
+        return efficiencyDiff !== 0 ? efficiencyDiff : a.value.localeCompare(b.value);
+    });
+    
+    // Initialize or update Choices.js
+    if (vendorChoices) {
+        vendorChoices.destroy();
+    }
+    
+    vendorChoices = new Choices(dropdown, {
+        removeItemButton: true,
+        searchEnabled: true,
+        searchChoices: true,
+        searchFields: ['label', 'value'],
+        searchFloor: 1,
+        searchResultLimit: 40,
+        placeholder: true,
+        placeholderValue: 'Search and select vendors...',
+        noResultsText: 'No vendors found',
+        noChoicesText: 'No vendors available',
+        itemSelectText: 'Press to select',
+        maxItemCount: -1,
+        shouldSort: false, // We've already sorted
+        choices: vendorOptions,
+        classNames: {
+            containerOuter: 'vendor-choices',
+            containerInner: 'vendor-choices__inner',
+            input: 'vendor-choices__input',
+            inputCloned: 'vendor-choices__input--cloned',
+            list: 'vendor-choices__list',
+            listItems: 'vendor-choices__list--multiple',
+            listSingle: 'vendor-choices__list--single',
+            listDropdown: 'vendor-choices__list--dropdown',
+            item: 'vendor-choices__item',
+            itemSelectable: 'vendor-choices__item--selectable',
+            itemDisabled: 'vendor-choices__item--disabled',
+            itemChoice: 'vendor-choices__item--choice',
+            placeholder: 'vendor-choices__placeholder',
+            group: 'vendor-choices__group',
+            groupHeading: 'vendor-choices__heading',
+            button: 'vendor-choices__button',
+            activeState: 'is-active',
+            focusState: 'is-focused',
+            openState: 'is-open',
+            disabledState: 'is-disabled',
+            highlightedState: 'is-highlighted',
+            hiddenState: 'is-hidden',
+            flippedState: 'is-flipped',
+            selectedState: 'is-selected'
+        }
+    });
+    
+    // Set initial selection to all vendors
+    vendorChoices.setValue(mapData.vendorList);
+    selectedVendors = ['all'];
+    
+    // Handle selection changes
+    dropdown.addEventListener('choice', function(event) {
+        updateSelectedVendors();
+    });
+    
+    dropdown.addEventListener('removeItem', function(event) {
+        updateSelectedVendors();
+    });
+    
+    updateVendorSelectionInfo();
+    console.log('Updated vendor multi-select dropdown with', mapData.vendorList.length, 'vendors');
+};
+
+const updateSelectedVendors = () => {
+    if (!vendorChoices) return;
+    
+    const currentValues = vendorChoices.getValue(true); // Get array of selected values
+    
+    if (currentValues.length === 0) {
+        selectedVendors = [];
+    } else if (currentValues.length === mapData.vendorList.length) {
+        selectedVendors = ['all'];
+    } else {
+        selectedVendors = currentValues;
+    }
+    
+    updateVendorSelectionInfo();
+    
+    // Update map with performance optimization
+    requestAnimationFrame(() => {
+        if (vendorChoroplethLayer) {
+            createVendorChoroplethLayer();
+        }
+        updateLegend();
+    });
+};
+
+const updateVendorSelectionInfo = () => {
+    const infoElement = document.getElementById('vendor-selection-info');
+    if (!infoElement) return;
+    
+    if (selectedVendors.includes('all')) {
+        infoElement.textContent = `All vendors selected (${mapData.vendorList.length} total)`;
+        infoElement.style.color = '#28a745';
+    } else if (selectedVendors.length === 0) {
+        infoElement.textContent = 'No vendors selected';
+        infoElement.style.color = '#dc3545';
+    } else {
+        infoElement.textContent = `${selectedVendors.length} of ${mapData.vendorList.length} vendors selected`;
+        infoElement.style.color = '#007cba';
+    }
 };
 
 const createLegend = () => {
@@ -570,67 +950,130 @@ const updateLegend = () => {
     const legend = document.getElementById('vendor-legend');
     if (!legend || !mapData.zipCodeData) return;
     
-    // Filter data based on selected vendor
-    const filteredData = selectedVendor === 'all' 
-        ? mapData.zipCodeData 
-        : mapData.zipCodeData.filter(d => d.vendor === selectedVendor);
+    // Get relevant vendors and their data
+    const relevantVendors = selectedVendors.includes('all') 
+        ? mapData.vendorList 
+        : selectedVendors;
     
-    // Calculate efficiency statistics
-    const lowCount = filteredData.filter(d => d.efficiencyTier === 'low').length;
-    const mediumCount = filteredData.filter(d => d.efficiencyTier === 'medium').length;
-    const highCount = filteredData.filter(d => d.efficiencyTier === 'high').length;
+    // Calculate statistics for selected vendors
+    const relevantZipData = Object.entries(mapData.zipcodeVendorMap)
+        .filter(([zip, vendors]) => {
+            if (selectedVendors.includes('all')) return true;
+            return vendors.some(v => selectedVendors.includes(v.vendor));
+        })
+        .map(([zip, vendors]) => {
+            const filteredVendors = selectedVendors.includes('all') 
+                ? vendors 
+                : vendors.filter(v => selectedVendors.includes(v.vendor));
+            
+            const totalPrintPieces = filteredVendors.reduce((sum, v) => sum + v.printPieces, 0);
+            const totalVisitors = filteredVendors.reduce((sum, v) => sum + v.visitors, 0);
+            const efficiency = calculateEfficiency(totalVisitors, totalPrintPieces);
+            
+            return {
+                zip,
+                vendors: filteredVendors,
+                efficiency,
+                efficiencyTier: getEfficiencyTier(efficiency),
+                hasOverlap: filteredVendors.length > 1
+            };
+        });
+    
+    const lowCount = relevantZipData.filter(d => d.efficiencyTier === 'low').length;
+    const mediumCount = relevantZipData.filter(d => d.efficiencyTier === 'medium').length;
+    const highCount = relevantZipData.filter(d => d.efficiencyTier === 'high').length;
+    const overlapCount = relevantZipData.filter(d => d.hasOverlap).length;
     
     let content = `
         <h3 style="margin: 0 0 15px 0; font-size: 16px; color: #333;">
-            Legend
+            Legend ${relevantVendors.length > 0 ? `(${relevantVendors.length} vendors)` : ''}
         </h3>
-        
-        <div style="margin-bottom: 20px;">
-            <h4 style="margin: 0 0 10px 0; font-size: 14px; color: #555;">
-                Efficiency Tiers ${efficiencyShading ? '(with shading)' : '(solid colors)'}
-            </h4>
-            <div style="margin-bottom: 8px; display: flex; align-items: center;">
-                <div style="width: 20px; height: 15px; background: rgba(231, 76, 60, ${efficiencyShading ? '0.3' : '1.0'}); margin-right: 8px; border: 1px solid #ccc;"></div>
-                <span style="font-size: 12px;">Low (≤5%) - ${lowCount} areas</span>
-            </div>
-            <div style="margin-bottom: 8px; display: flex; align-items: center;">
-                <div style="width: 20px; height: 15px; background: rgba(231, 76, 60, ${efficiencyShading ? '0.6' : '1.0'}); margin-right: 8px; border: 1px solid #ccc;"></div>
-                <span style="font-size: 12px;">Medium (5.1-49%) - ${mediumCount} areas</span>
-            </div>
-            <div style="margin-bottom: 8px; display: flex; align-items: center;">
-                <div style="width: 20px; height: 15px; background: rgba(231, 76, 60, 1.0); margin-right: 8px; border: 1px solid #ccc;"></div>
-                <span style="font-size: 12px;">High (≥50%) - ${highCount} areas</span>
-            </div>
-        </div>
     `;
     
-    if (selectedVendor === 'all' && mapData.vendorList.length > 0) {
+    if (relevantVendors.length === 0) {
+        content += `
+            <div style="text-align: center; color: #666; padding: 20px;">
+                <strong>No vendors selected</strong><br>
+                <small>Select vendors to see data visualization</small>
+            </div>
+        `;
+    } else {
         content += `
             <div style="margin-bottom: 20px;">
                 <h4 style="margin: 0 0 10px 0; font-size: 14px; color: #555;">
-                    Vendor Colors
+                    Performance Overview ${efficiencyShading ? '(with shading)' : '(solid colors)'}
                 </h4>
-                <div style="max-height: 150px; overflow-y: auto;">
+                <div style="margin-bottom: 8px; display: flex; align-items: center;">
+                    <div style="width: 20px; height: 15px; background: rgba(231, 76, 60, ${efficiencyShading ? '0.3' : '1.0'}); margin-right: 8px; border: 1px solid #ccc;"></div>
+                    <span style="font-size: 12px;">Low (≤5%) - ${lowCount} areas</span>
+                </div>
+                <div style="margin-bottom: 8px; display: flex; align-items: center;">
+                    <div style="width: 20px; height: 15px; background: rgba(231, 76, 60, ${efficiencyShading ? '0.6' : '1.0'}); margin-right: 8px; border: 1px solid #ccc;"></div>
+                    <span style="font-size: 12px;">Medium (5.1-49%) - ${mediumCount} areas</span>
+                </div>
+                <div style="margin-bottom: 8px; display: flex; align-items: center;">
+                    <div style="width: 20px; height: 15px; background: rgba(231, 76, 60, 1.0); margin-right: 8px; border: 1px solid #ccc;"></div>
+                    <span style="font-size: 12px;">High (≥50%) - ${highCount} areas</span>
+                </div>
         `;
         
-        mapData.vendorList.forEach(vendor => {
-            const vendorColor = assignVendorColor(vendor, mapData.vendorList);
-            const vendorZips = mapData.zipCodeData.filter(d => d.vendor === vendor);
-            const vendorZipCount = vendorZips.length;
-            const avgEfficiency = vendorZips.length > 0 
-                ? vendorZips.reduce((sum, d) => sum + d.efficiency, 0) / vendorZipCount 
-                : 0;
-            
+        if (overlapCount > 0) {
             content += `
-                <div style="margin-bottom: 6px; display: flex; align-items: center; font-size: 11px;">
-                    <div style="width: 15px; height: 15px; background: ${vendorColor}; margin-right: 8px; border: 1px solid #ccc;"></div>
-                    <span style="flex: 1;">${vendor}</span>
-                    <span style="color: #666;">${vendorZipCount} areas, ${avgEfficiency.toFixed(1)}% avg</span>
+                <div style="margin-top: 12px; padding: 8px; background: #f8f9fa; border-radius: 4px;">
+                    <div style="display: flex; align-items: center; margin-bottom: 4px;">
+                        <div style="width: 20px; height: 15px; background: repeating-linear-gradient(45deg, #e74c3c 0px, #e74c3c 4px, #3498db 4px, #3498db 8px); margin-right: 8px; border: 1px solid #ccc;"></div>
+                        <span style="font-size: 12px;"><strong>Vendor Overlaps - ${overlapCount} areas</strong></span>
+                    </div>
+                    <small style="color: #666;">Striped patterns show multiple vendors in same ZIP code</small>
                 </div>
             `;
-        });
+        }
         
-        content += `</div></div>`;
+        content += `</div>`;
+        
+        if (relevantVendors.length <= 15) { // Only show individual vendors if not too many
+            content += `
+                <div style="margin-bottom: 20px;">
+                    <h4 style="margin: 0 0 10px 0; font-size: 14px; color: #555;">
+                        Selected Vendors (${relevantVendors.length})
+                    </h4>
+                    <div style="max-height: 200px; overflow-y: auto;">
+            `;
+            
+            relevantVendors.forEach(vendor => {
+                const vendorColor = assignVendorColor(vendor, mapData.vendorList);
+                const vendorData = Object.values(mapData.zipcodeVendorMap)
+                    .flat()
+                    .filter(v => v.vendor === vendor);
+                
+                const vendorZipCount = [...new Set(
+                    Object.entries(mapData.zipcodeVendorMap)
+                        .filter(([zip, vendors]) => vendors.some(v => v.vendor === vendor))
+                        .map(([zip]) => zip)
+                )].length;
+                
+                const avgEfficiency = vendorData.length > 0 
+                    ? vendorData.reduce((sum, v) => sum + v.efficiency, 0) / vendorData.length 
+                    : 0;
+                
+                content += `
+                    <div style="margin-bottom: 6px; display: flex; align-items: center; font-size: 11px;">
+                        <div style="width: 15px; height: 15px; background: ${vendorColor}; margin-right: 8px; border: 1px solid #ccc;"></div>
+                        <span style="flex: 1; word-break: break-word;">${vendor}</span>
+                        <span style="color: #666; margin-left: 4px;">${vendorZipCount} areas, ${avgEfficiency.toFixed(1)}%</span>
+                    </div>
+                `;
+            });
+            
+            content += `</div></div>`;
+        } else {
+            content += `
+                <div style="margin-bottom: 20px; text-align: center; padding: 10px; background: #f8f9fa; border-radius: 4px;">
+                    <strong>${relevantVendors.length} vendors selected</strong><br>
+                    <small style="color: #666;">Too many to display individually</small>
+                </div>
+            `;
+        }
     }
     
     if (showStoreLocations) {
