@@ -70,97 +70,6 @@ const getZipsByVendor = (data, targetVendor) => {
     return data.filter(item => item.vendor === targetVendor);
 };
 
-// Canvas-based pattern fallback for better browser compatibility
-const createCanvasPattern = (vendorColors) => {
-    if (vendorColors.length <= 1) return null;
-    
-    try {
-        console.log('Creating canvas pattern for', vendorColors.length, 'vendors');
-        
-        // Create a small canvas for the pattern
-        const canvas = document.createElement('canvas');
-        const size = 32;
-        canvas.width = size;
-        canvas.height = size;
-        const ctx = canvas.getContext('2d');
-        
-        // Fill background with first color
-        ctx.fillStyle = vendorColors[0];
-        ctx.fillRect(0, 0, size, size);
-        
-        // Add diagonal stripes for other colors
-        const stripeWidth = size / vendorColors.length;
-        
-        // Save context for rotation
-        ctx.save();
-        ctx.translate(size / 2, size / 2);
-        ctx.rotate(Math.PI / 4); // 45 degree rotation
-        ctx.translate(-size / 2, -size / 2);
-        
-        vendorColors.forEach((color, index) => {
-            if (index > 0) {
-                ctx.fillStyle = color;
-                ctx.globalAlpha = 0.85;
-                
-                const x = (index - 1) * stripeWidth;
-                ctx.fillRect(x, -size, stripeWidth * 0.8, size * 3);
-            }
-        });
-        
-        ctx.restore();
-        
-        // Convert to data URL
-        const dataUrl = canvas.toDataURL('image/png');
-        console.log('Canvas pattern created successfully');
-        return `url(${dataUrl})`;
-        
-    } catch (error) {
-        console.error('Canvas pattern creation failed:', error);
-        return null;
-    }
-};
-
-// SVG Pattern Generation for Vendor Overlaps - REPLACED WITH CSS GRADIENTS
-const createOverlapStyle = (vendorColors, efficiency) => {
-    if (vendorColors.length <= 1) {
-        return null;
-    }
-    
-    console.log(`Creating overlap style for ${vendorColors.length} vendors:`, vendorColors);
-    
-    // Try canvas approach first as it's more reliable
-    const canvasPattern = createCanvasPattern(vendorColors);
-    if (canvasPattern) {
-        return canvasPattern;
-    }
-    
-    // Fallback to SVG data URL
-    const patternSize = 24;
-    const stripeWidth = patternSize / vendorColors.length;
-    
-    let svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="${patternSize}" height="${patternSize}">`;
-    svgContent += `<defs><pattern id="stripe" x="0" y="0" width="${patternSize}" height="${patternSize}" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">`;
-    
-    // Add background
-    svgContent += `<rect width="${patternSize}" height="${patternSize}" fill="${vendorColors[0]}"/>`;
-    
-    // Add stripes for other vendors
-    vendorColors.forEach((color, index) => {
-        if (index > 0) {
-            const x = index * stripeWidth;
-            svgContent += `<rect x="${x}" y="0" width="${stripeWidth}" height="${patternSize * 2}" fill="${color}" opacity="0.8"/>`;
-        }
-    });
-    
-    svgContent += `</pattern></defs><rect width="100%" height="100%" fill="url(#stripe)"/></svg>`;
-    
-    // Convert to data URL
-    const dataUrl = `url("data:image/svg+xml,${encodeURIComponent(svgContent)}")`;
-    console.log(`Created SVG data URL pattern for ${vendorColors.length} vendors`);
-    
-    return dataUrl;
-};
-
 const getVendorColors = (zipCode, selectedVendorsList) => {
     const vendorsInZip = mapData.zipcodeVendorMap[zipCode];
     if (!vendorsInZip) return [];
@@ -420,24 +329,19 @@ const createVendorChoroplethLayer = () => {
             const hasMultipleRelevantVendors = relevantVendors.length > 1;
             
             if (hasMultipleRelevantVendors) {
-                // Multiple relevant vendors selected - use hatching with stroke patterns
-                console.log(`ZIP ${zipCode}: Multiple relevant vendors (${relevantVendors.length}) - applying hatching`);
+                // Multiple relevant vendors selected - use color blending
+                console.log(`ZIP ${zipCode}: Multiple relevant vendors (${relevantVendors.length}) - applying color blending`);
                 
-                // Use primary vendor color as fill
-                style.fillColor = getVendorColorWithEfficiency(vendorColors[0], efficiency);
-                style.fillOpacity = opacity * 0.7; // Slightly more transparent
+                // Use weighted color blending based on market presence
+                const blendedColor = blendColorsWeighted(relevantVendors);
+                style.fillColor = getVendorColorWithEfficiency(blendedColor, efficiency);
+                style.fillOpacity = opacity;
                 
-                // Apply hatching pattern using stroke
-                const secondaryColor = vendorColors[1] || vendorColors[0];
-                style.color = secondaryColor; // Border in secondary vendor color
-                style.weight = 3;
-                style.dashArray = '6, 3'; // Dashed border to indicate overlap
+                // Clean border styling - no dashes!
+                style.color = '#333333';
+                style.weight = 2;
                 
-                // Add additional visual indicator using opacity layers
-                style._isOverlap = true;
-                style._vendorColors = vendorColors;
-                
-                console.log(`Applied hatching to ZIP ${zipCode} with colors:`, vendorColors);
+                console.log(`Applied blended color ${blendedColor} to ZIP ${zipCode}`);
             } else if (hasMultipleVendorsOriginally && relevantVendors.length === 1) {
                 // Single vendor selected from multi-vendor ZIP - show with subtle indicator
                 console.log(`ZIP ${zipCode}: Single vendor from multi-vendor area`);
@@ -445,7 +349,7 @@ const createVendorChoroplethLayer = () => {
                 style.fillOpacity = opacity * 0.85; // Slightly more transparent to indicate more vendors available
                 style.color = '#ff8c00'; // Orange border to indicate multi-vendor ZIP
                 style.weight = 2;
-                style.dashArray = '4, 2'; // Light dashed border
+                // No dashed array - clean solid border
             } else {
                 // Single vendor ZIP - normal display
                 style.fillColor = getVendorColorWithEfficiency(vendorColors[0], efficiency);
@@ -1195,23 +1099,48 @@ const updateLegend = () => {
                         <div style="
                             width: 20px; 
                             height: 15px; 
-                            background: #e74c3c;
-                            border: 3px dashed #3498db;
+                            background: linear-gradient(45deg, #e74c3c 0%, #8e44ad 50%, #3498db 100%);
+                            border: 1px solid #333;
                             margin-right: 8px;
                         "></div>
                         <span style="font-size: 12px;"><strong>Multi-Vendor Overlaps - ${overlapCount} areas</strong></span>
+                    </div>
+                    <div style="display: flex; align-items: center; margin-bottom: 6px;">
+                        <div style="
+                            width: 16px; 
+                            height: 12px; 
+                            background: #e74c3c;
+                            border: 1px solid #333;
+                            margin-right: 4px;
+                        "></div>
+                        <span style="font-size: 10px;">+</span>
+                        <div style="
+                            width: 16px; 
+                            height: 12px; 
+                            background: #3498db;
+                            border: 1px solid #333;
+                            margin: 0 4px;
+                        "></div>
+                        <span style="font-size: 10px;">=</span>
+                        <div style="
+                            width: 16px; 
+                            height: 12px; 
+                            background: #8e44ad;
+                            border: 1px solid #333;
+                            margin-left: 4px;
+                        "></div>
                     </div>
                     <div style="display: flex; align-items: center; margin-bottom: 4px;">
                         <div style="
                             width: 20px; 
                             height: 15px; 
                             background: #e74c3c; 
-                            border: 2px dashed #ff8c00;
+                            border: 2px solid #ff8c00;
                             margin-right: 8px;
                         "></div>
                         <span style="font-size: 11px;">Single vendor from multi-vendor ZIP</span>
                     </div>
-                    <small style="color: #666;">Dashed borders indicate multiple vendors available in ZIP code</small>
+                    <small style="color: #666;">Colors blend proportionally based on market presence (print volume)</small>
                 </div>
             `;
         }
@@ -1353,6 +1282,80 @@ const loadCSV = async (filepath) => {
         skipEmptyLines: true,
         delimitersToGuess: [',', '\t', '|', ';']
     }).data;
+};
+
+// Color blending functions for vendor overlaps
+const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16)
+    } : null;
+};
+
+const rgbToHex = (r, g, b) => {
+    return "#" + ((1 << 24) + (Math.round(r) << 16) + (Math.round(g) << 8) + Math.round(b)).toString(16).slice(1);
+};
+
+const blendColors = (colors) => {
+    if (colors.length === 1) return colors[0];
+    if (colors.length === 0) return '#cccccc';
+    
+    console.log('Blending colors:', colors);
+    
+    // Convert all colors to RGB
+    const rgbColors = colors.map(color => hexToRgb(color)).filter(rgb => rgb !== null);
+    
+    if (rgbColors.length === 0) return '#cccccc';
+    
+    // Calculate weighted average (can be modified for different blending approaches)
+    const avgR = rgbColors.reduce((sum, rgb) => sum + rgb.r, 0) / rgbColors.length;
+    const avgG = rgbColors.reduce((sum, rgb) => sum + rgb.g, 0) / rgbColors.length;
+    const avgB = rgbColors.reduce((sum, rgb) => sum + rgb.b, 0) / rgbColors.length;
+    
+    const blendedColor = rgbToHex(avgR, avgG, avgB);
+    console.log('Blended result:', blendedColor);
+    
+    return blendedColor;
+};
+
+// Enhanced color blending with vendor weighting (based on performance or market share)
+const blendColorsWeighted = (vendorData) => {
+    if (vendorData.length === 1) {
+        return assignVendorColor(vendorData[0].vendor, mapData.vendorList);
+    }
+    if (vendorData.length === 0) return '#cccccc';
+    
+    console.log('Weighted blending for vendors:', vendorData.map(v => v.vendor));
+    
+    // Weight by print pieces (market presence)
+    const totalPrintPieces = vendorData.reduce((sum, v) => sum + v.printPieces, 0);
+    
+    if (totalPrintPieces === 0) {
+        // Fallback to simple average if no print data
+        const colors = vendorData.map(v => assignVendorColor(v.vendor, mapData.vendorList));
+        return blendColors(colors);
+    }
+    
+    let weightedR = 0, weightedG = 0, weightedB = 0;
+    
+    vendorData.forEach(vendor => {
+        const color = assignVendorColor(vendor.vendor, mapData.vendorList);
+        const rgb = hexToRgb(color);
+        const weight = vendor.printPieces / totalPrintPieces;
+        
+        if (rgb) {
+            weightedR += rgb.r * weight;
+            weightedG += rgb.g * weight;
+            weightedB += rgb.b * weight;
+        }
+    });
+    
+    const blendedColor = rgbToHex(weightedR, weightedG, weightedB);
+    console.log('Weighted blend result:', blendedColor);
+    
+    return blendedColor;
 };
 
 // Initialize when DOM is ready
